@@ -1,4 +1,4 @@
-package com.policeapp.police_app
+package com.kpk.policecasedocs
 
 import io.flutter.embedding.android.FlutterActivity
 

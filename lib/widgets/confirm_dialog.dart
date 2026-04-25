@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/theme_context.dart';
 import '../services/language_service.dart';
 
 Future<bool> showConfirmDialog(BuildContext context, {required LanguageService lang}) async {
@@ -34,9 +35,10 @@ class _ConfirmDialogContent extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 28),
         padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
         decoration: BoxDecoration(
-          color: AppColors.surfaceCard,
+          color: context.policeCard,
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: AppColors.shadowMedium, blurRadius: 40, offset: const Offset(0, 12))],
+          border: Border.all(color: context.policeBorder.withValues(alpha: 0.5)),
+          boxShadow: [BoxShadow(color: context.policeDialogShadow, blurRadius: 40, offset: const Offset(0, 12))],
         ),
         child: Material(
           color: Colors.transparent,
@@ -54,8 +56,8 @@ class _ConfirmDialogContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary)
-                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
               ),
               const SizedBox(height: 8),
               Text(
@@ -63,8 +65,8 @@ class _ConfirmDialogContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 14, color: AppColors.textSecondary)
-                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: AppColors.textSecondary, height: 1.5),
+                    ? lang.urduStyle(fontSize: 14, color: context.policeTextSecondary)
+                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: context.policeTextSecondary, height: 1.5),
               ),
               const SizedBox(height: 28),
               Row(
@@ -106,13 +108,20 @@ class _DialogButtonState extends State<_DialogButton> with SingleTickerProviderS
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final borderColor = context.isPoliceDark ? AppColors.darkBorder : Colors.grey.shade300;
     return GestureDetector(
       onTapDown: (_) => _ctrl.forward(),
-      onTapUp: (_) { _ctrl.reverse(); widget.onTap(); },
+      onTapUp: (_) {
+        _ctrl.reverse();
+        widget.onTap();
+      },
       onTapCancel: () => _ctrl.reverse(),
       child: ScaleTransition(
         scale: _scale,
@@ -122,14 +131,22 @@ class _DialogButtonState extends State<_DialogButton> with SingleTickerProviderS
             borderRadius: BorderRadius.circular(14),
             gradient: widget.isPrimary ? const LinearGradient(colors: AppColors.confirmGradient) : null,
             color: widget.isPrimary ? null : Colors.transparent,
-            border: widget.isPrimary ? null : Border.all(color: Colors.grey.shade300, width: 1.5),
+            border: widget.isPrimary ? null : Border.all(color: borderColor, width: 1.5),
           ),
           alignment: Alignment.center,
           child: Text(
             widget.label,
             style: widget.isUrdu
-                ? GoogleFonts.notoNastaliqUrdu(fontSize: 14, fontWeight: FontWeight.w600, color: widget.isPrimary ? Colors.white : AppColors.textSecondary)
-                : GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: widget.isPrimary ? Colors.white : AppColors.textSecondary),
+                ? GoogleFonts.notoNastaliqUrdu(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: widget.isPrimary ? Colors.white : context.policeTextSecondary,
+                  )
+                : GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: widget.isPrimary ? Colors.white : context.policeTextSecondary,
+                  ),
           ),
         ),
       ),

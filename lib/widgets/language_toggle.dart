@@ -2,6 +2,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/language_service.dart';
+import '../core/theme/app_colors.dart';
+import '../core/theme/theme_context.dart';
 
 class LanguageToggle extends StatefulWidget {
   final LanguageService lang;
@@ -65,6 +67,13 @@ class _LanguageToggleState extends State<LanguageToggle>
 
   @override
   Widget build(BuildContext context) {
+    final dark = context.isPoliceDark;
+    final baseTint = dark ? Colors.white.withValues(alpha: 0.08) : Colors.white.withValues(alpha: 0.15);
+    final borderTint = dark ? Colors.white.withValues(alpha: 0.14) : Colors.white.withValues(alpha: 0.2);
+    final chipBg = dark ? AppColors.darkCard.withValues(alpha: 0.95) : Colors.white.withValues(alpha: 0.92);
+    final activeEn = dark ? AppColors.darkTextPrimary : const Color(0xFF0A1929);
+    final muted = dark ? AppColors.darkTextSecondary : const Color(0xFF9AA5B4);
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(_kHeight / 2),
       child: BackdropFilter(
@@ -77,15 +86,15 @@ class _LanguageToggleState extends State<LanguageToggle>
               width: _kWidth,
               height: _kHeight,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
+                color: baseTint,
                 borderRadius: BorderRadius.circular(_kHeight / 2),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.2),
+                  color: borderTint,
                   width: 1,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
+                    color: Colors.black.withValues(alpha: dark ? 0.35 : 0.06),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
@@ -100,13 +109,13 @@ class _LanguageToggleState extends State<LanguageToggle>
                       width: _chipWidth,
                       height: _kHeight - (_kChipPadding * 2),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.92),
+                        color: chipBg,
                         borderRadius: BorderRadius.circular(
                           (_kHeight - _kChipPadding * 2) / 2,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
+                            color: Colors.black.withValues(alpha: dark ? 0.25 : 0.08),
                             blurRadius: 6,
                             offset: const Offset(0, 1),
                           ),
@@ -128,8 +137,8 @@ class _LanguageToggleState extends State<LanguageToggle>
                                 fontWeight:
                                     t < 0.5 ? FontWeight.w700 : FontWeight.w500,
                                 color: Color.lerp(
-                                  const Color(0xFF0A1929),
-                                  const Color(0xFF9AA5B4),
+                                  activeEn,
+                                  muted,
                                   t,
                                 ),
                               ),
@@ -149,8 +158,8 @@ class _LanguageToggleState extends State<LanguageToggle>
                                 fontWeight:
                                     t > 0.5 ? FontWeight.w700 : FontWeight.w500,
                                 color: Color.lerp(
-                                  const Color(0xFF9AA5B4),
-                                  const Color(0xFF0A1929),
+                                  muted,
+                                  activeEn,
                                   t,
                                 ),
                               ),
@@ -175,8 +184,7 @@ class _SpringCurve extends Curve {
 
   @override
   double transformInternal(double t) {
-    // Fast attack, slight overshoot, smooth settle — iOS-like spring
-    final p = t * t * (3.0 - 2.0 * t); // smooth-step base
+    final p = t * t * (3.0 - 2.0 * t);
     final overshoot = (1.0 + 0.08 * (1.0 - (2.0 * t - 1.0) * (2.0 * t - 1.0)));
     return p * overshoot;
   }

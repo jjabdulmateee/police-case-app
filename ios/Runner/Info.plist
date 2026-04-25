@@ -49,5 +49,9 @@
 	<string>This app needs microphone access to transcribe your voice into case documentation.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>This app uses speech recognition to convert your spoken words into text for case records.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera to photograph paper forms and letterheads for your PDF document layout.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs photo access to let you pick a picture of a paper form for your PDF layout.</string>
 </dict>
 </plist>

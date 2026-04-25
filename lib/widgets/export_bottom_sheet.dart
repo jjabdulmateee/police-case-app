@@ -1,10 +1,17 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:printing/printing.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/theme_context.dart';
 import '../models/case_record.dart';
+import '../models/case_reference.dart';
 import '../services/pdf_service.dart';
+import '../services/document_format_service.dart';
 import '../services/language_service.dart';
+import '../services/printer_service.dart';
 
 enum _ExportAction { pdf, print }
 
@@ -46,26 +53,37 @@ class _ExportSheetContentState extends State<_ExportSheetContent> {
   Future<void> _handleAction(_ExportAction action) async {
     setState(() => _loading = true);
     try {
-      final doc = await PdfService.generateCasePdf(widget.record, caseNumber: widget.caseNumber);
+      final box = Hive.box<CaseRecord>('cases');
+      final ref = CaseReference.resolve(widget.record, box);
+      final doc = await PdfService.generateCasePdf(
+        widget.record,
+        caseNumber: widget.caseNumber,
+        caseReference: ref,
+        documentFormat: DocumentFormatService().templateForCaseExport(widget.record),
+      );
       if (!mounted) return;
+      final parentCtx = widget.parentContext;
       Navigator.of(context).pop();
       if (action == _ExportAction.pdf) {
         await Printing.sharePdf(bytes: await doc.save(), filename: 'Case_${widget.caseNumber}.pdf');
       } else {
-        final printed = await Printing.layoutPdf(onLayout: (_) => doc.save(), name: 'Case ${widget.caseNumber}');
-        if (!printed && widget.parentContext.mounted) {
-          ScaffoldMessenger.of(widget.parentContext).showSnackBar(SnackBar(
-            content: const Text('No printer found — please connect a printer and try again.'),
-            behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), backgroundColor: AppColors.error,
-          ));
-        }
+        final list = await doc.save();
+        if (!parentCtx.mounted) return;
+        await printPdfWithDirectFallback(
+          parentCtx,
+          lang: widget.lang ?? LanguageService(),
+          getPdf: () async => Uint8List.fromList(list),
+          jobName: 'Case ${widget.caseNumber}',
+        );
       }
     } catch (e) {
       if (mounted) Navigator.of(context).pop();
       if (widget.parentContext.mounted) {
         ScaffoldMessenger.of(widget.parentContext).showSnackBar(SnackBar(
-          content: Text('Export failed: $e'), behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), backgroundColor: AppColors.error,
+          content: Text('Export failed: $e'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: AppColors.error,
         ));
       }
     } finally {
@@ -77,12 +95,30 @@ class _ExportSheetContentState extends State<_ExportSheetContent> {
   Widget build(BuildContext context) {
     final l = widget.lang;
     return Container(
-      decoration: const BoxDecoration(color: AppColors.surfaceCard, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      decoration: BoxDecoration(
+        color: context.policeCard,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border.all(color: context.policeBorder.withValues(alpha: 0.5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: context.isPoliceDark ? 0.5 : 0.12),
+            blurRadius: 24,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const SizedBox(height: 12),
-          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: context.policeTextHint.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           const SizedBox(height: 22),
           Container(
             padding: const EdgeInsets.all(14),
@@ -94,16 +130,16 @@ class _ExportSheetContentState extends State<_ExportSheetContent> {
             l?.caseSavedTitle ?? 'Case Saved Successfully',
             textDirection: l?.textDirection,
             style: _isUrdu
-                ? GoogleFonts.notoNastaliqUrdu(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)
-                : GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                ? GoogleFonts.notoNastaliqUrdu(fontSize: 18, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                : GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
           ),
           const SizedBox(height: 4),
           Text(
             l?.whatNextText ?? 'What would you like to do next?',
             textDirection: l?.textDirection,
             style: _isUrdu
-                ? GoogleFonts.notoNastaliqUrdu(fontSize: 13, color: AppColors.textSecondary)
-                : GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary),
+                ? GoogleFonts.notoNastaliqUrdu(fontSize: 13, color: context.policeTextSecondary)
+                : GoogleFonts.inter(fontSize: 13, color: context.policeTextSecondary),
           ),
           const SizedBox(height: 24),
           if (_loading)
@@ -120,7 +156,7 @@ class _ExportSheetContentState extends State<_ExportSheetContent> {
           const SizedBox(height: 16),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(l?.skipText ?? 'Skip for now', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textHint)),
+            child: Text(l?.skipText ?? 'Skip for now', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: context.policeTextHint)),
           ),
           SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
         ],
@@ -150,26 +186,33 @@ class _ActionTileState extends State<_ActionTile> with SingleTickerProviderState
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTapDown: (_) => _ctrl.forward(),
-      onTapUp: (_) { _ctrl.reverse(); widget.onTap(); },
+      onTapUp: (_) {
+        _ctrl.reverse();
+        widget.onTap();
+      },
       onTapCancel: () => _ctrl.reverse(),
       child: ScaleTransition(
         scale: _scale,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 22),
           decoration: BoxDecoration(
-            color: AppColors.accent.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.accent.withValues(alpha: 0.12), width: 1.5),
+            color: AppColors.accent.withValues(alpha: context.isPoliceDark ? 0.1 : 0.05),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.accent.withValues(alpha: context.isPoliceDark ? 0.22 : 0.12), width: 1.5),
           ),
           child: Column(children: [
             Icon(widget.icon, color: AppColors.accent, size: 28),
             const SizedBox(height: 10),
-            Text(widget.label, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            Text(widget.label, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: context.policeTextPrimary)),
           ]),
         ),
       ),

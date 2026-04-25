@@ -4,17 +4,18 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
+import '../core/constants.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/theme_context.dart';
 import '../models/case_record.dart';
 import '../services/language_service.dart';
-import '../widgets/pulse_mic_button.dart';
 import '../widgets/confirm_button.dart';
 import '../widgets/section_label.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/font_picker_button.dart';
+import '../widgets/case_media_section.dart';
 import '../widgets/language_toggle.dart';
-
-enum _ActiveField { heading, paragraph }
+enum _ActiveField { reference, heading, paragraph }
 
 class EditCaseScreen extends StatefulWidget {
   final CaseRecord record;
@@ -27,8 +28,10 @@ class EditCaseScreen extends StatefulWidget {
 }
 
 class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStateMixin {
+  late TextEditingController _referenceController;
   late TextEditingController _headingController;
   late TextEditingController _paragraphController;
+  final _referenceFocus = FocusNode();
   final _headingFocus = FocusNode();
   final _paragraphFocus = FocusNode();
 
@@ -36,10 +39,9 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
   bool _speechAvailable = false;
   bool _isListening = false;
   bool _wantListening = false;
-
-  _ActiveField? _activeField;
+  _ActiveField? _recordingField;
   String _textBeforeListening = '';
-  _ActiveField? _lockedField;
+  int _listenGeneration = 0;
 
   late int _headingFontIndex;
   late int _paragraphFontIndex;
@@ -48,8 +50,10 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
 
   late final String _originalHeading;
   late final String _originalDetails;
+  late final String _originalReference;
 
   bool get _hasUnsavedChanges =>
+      _referenceController.text != _originalReference ||
       _headingController.text != _originalHeading ||
       _paragraphController.text != _originalDetails;
 
@@ -58,7 +62,9 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     super.initState();
     _originalHeading = widget.record.heading;
     _originalDetails = widget.record.details;
+    _originalReference = widget.record.caseReferenceNo;
 
+    _referenceController = TextEditingController(text: _originalReference);
     _headingController = TextEditingController(text: _originalHeading);
     _paragraphController = TextEditingController(text: _originalDetails);
 
@@ -67,9 +73,6 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     _paragraphFontIndex = availableFonts.indexWhere((f) => f.displayName == widget.record.detailsFont);
     if (_paragraphFontIndex < 0) _paragraphFontIndex = 0;
 
-    _headingFocus.addListener(_onFocusChanged);
-    _paragraphFocus.addListener(_onFocusChanged);
-
     _lang.addListener(_onLangChanged);
     _lang.init();
     _initSpeech();
@@ -77,8 +80,10 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
 
   @override
   void dispose() {
+    _referenceController.dispose();
     _headingController.dispose();
     _paragraphController.dispose();
+    _referenceFocus.dispose();
     _headingFocus.dispose();
     _paragraphFocus.dispose();
     _lang.removeListener(_onLangChanged);
@@ -87,21 +92,6 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
   }
 
   void _onLangChanged() => setState(() {});
-
-  void _onFocusChanged() {
-    if (_headingFocus.hasFocus) {
-      _selectField(_ActiveField.heading);
-    } else if (_paragraphFocus.hasFocus) {
-      _selectField(_ActiveField.paragraph);
-    }
-  }
-
-  void _selectField(_ActiveField field) {
-    if (_isListening && _lockedField != field) {
-      _stopListening();
-    }
-    setState(() => _activeField = field);
-  }
 
   Future<void> _initSpeech() async {
     _speechAvailable = await _speech.initialize(
@@ -113,62 +103,82 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
 
   void _onSpeechError(SpeechRecognitionError error) {
     debugPrint('Speech error: ${error.errorMsg}');
-    if (_wantListening && error.errorMsg != 'error_busy') {
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (_wantListening && mounted) _startListenSession();
-      });
-    } else {
+    if (!_wantListening || _recordingField == null) {
       _stopListening();
+      return;
     }
+
+    if (error.errorMsg == 'error_busy') {
+      _scheduleRestart(delayMs: 300);
+      return;
+    }
+
+    if (error.errorMsg == 'error_speech_timeout' || error.errorMsg == 'error_no_match') {
+      _scheduleRestart();
+      return;
+    }
+
+    _scheduleRestart();
   }
 
   void _onSpeechStatus(String status) {
+    if (!mounted) return;
+    if (status == 'listening' && _isListening == false) {
+      setState(() => _isListening = true);
+      return;
+    }
+
     if (status == 'notListening' || status == 'done') {
-      if (_wantListening && mounted) {
-        _textBeforeListening = _activeController?.text ?? _textBeforeListening;
-        Future.delayed(const Duration(milliseconds: 200), () {
-          if (_wantListening && mounted) _startListenSession();
-        });
-      } else {
-        setState(() => _isListening = false);
+      setState(() => _isListening = false);
+      if (_wantListening && _recordingField != null) {
+        _scheduleRestart(delayMs: 150);
       }
     }
   }
 
-  TextEditingController? get _activeController {
-    if (_lockedField == _ActiveField.heading) return _headingController;
-    if (_lockedField == _ActiveField.paragraph) return _paragraphController;
-    return null;
+  TextEditingController _controllerFor(_ActiveField field) {
+    switch (field) {
+      case _ActiveField.reference:
+        return _referenceController;
+      case _ActiveField.heading:
+        return _headingController;
+      case _ActiveField.paragraph:
+        return _paragraphController;
+    }
   }
 
-  void _toggleListening() {
-    if (!_speechAvailable) return;
-    if (_wantListening) {
+  void _toggleListeningForField(_ActiveField field) {
+    if (!_speechAvailable) {
+      _showSnack('Speech recognition is not available on this device.', AppColors.error);
+      return;
+    }
+
+    if (_wantListening && _recordingField == field) {
       _stopListening();
       return;
     }
-    if (_activeField == null) {
-      _showSnack(
-        _lang.isUrdu ? 'پہلے عنوان یا تفصیل فیلڈ منتخب کریں' : 'Tap the Heading or Details field first.',
-        AppColors.primaryLight,
-      );
-      return;
+
+    if (_wantListening && _recordingField != field) {
+      _stopListening();
     }
-    _lockedField = _activeField;
-    _textBeforeListening = _activeController?.text ?? '';
+
+    _recordingField = field;
+    _textBeforeListening = _controllerFor(field).text;
     setState(() {
       _wantListening = true;
       _isListening = true;
     });
-    _startListenSession();
+    _listenGeneration += 1;
+    _startListenSession(generation: _listenGeneration);
   }
 
-  void _startListenSession() {
+  void _startListenSession({required int generation}) {
+    if (!_wantListening || _recordingField == null || generation != _listenGeneration) return;
     _speech.listen(
       onResult: _onSpeechResult,
       localeId: _lang.isUrdu ? 'ur_PK' : 'en_US',
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 5),
+      listenFor: const Duration(seconds: 60),
+      pauseFor: const Duration(seconds: 8),
       listenOptions: SpeechListenOptions(
         partialResults: true,
         listenMode: ListenMode.dictation,
@@ -176,29 +186,38 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     );
   }
 
+  void _scheduleRestart({int delayMs = 150}) {
+    final generation = _listenGeneration;
+    Future.delayed(Duration(milliseconds: delayMs), () {
+      if (!mounted) return;
+      if (!_wantListening || _recordingField == null) return;
+      if (generation != _listenGeneration) return;
+      _textBeforeListening = _controllerFor(_recordingField!).text;
+      _startListenSession(generation: generation);
+    });
+  }
+
   void _stopListening() {
     _wantListening = false;
+    _listenGeneration += 1;
     _speech.stop();
     setState(() {
       _isListening = false;
-      _lockedField = null;
+      _recordingField = null;
     });
   }
 
   void _onSpeechResult(SpeechRecognitionResult result) {
     final recognised = result.recognizedWords;
-    if (recognised.isEmpty || _lockedField == null) return;
+    final activeField = _recordingField;
+    if (recognised.isEmpty || activeField == null) return;
 
-    final controller = _activeController!;
-
-    if (_lockedField == _ActiveField.heading) {
-      final firstLine = recognised.split(RegExp(r'[.\n]')).first.trim();
-      final sep = _textBeforeListening.isEmpty ? '' : ' ';
-      controller.text = _textBeforeListening + sep + firstLine;
-    } else {
-      final sep = _textBeforeListening.isEmpty ? '' : ' ';
-      controller.text = _textBeforeListening + sep + recognised;
-    }
+    final controller = _controllerFor(activeField);
+    final cleaned = (activeField == _ActiveField.heading || activeField == _ActiveField.reference)
+        ? recognised.replaceAll('\n', ' ').trim()
+        : recognised.trim();
+    final sep = _textBeforeListening.isEmpty ? '' : ' ';
+    controller.text = _textBeforeListening + sep + cleaned;
 
     controller.selection = TextSelection.fromPosition(
       TextPosition(offset: controller.text.length),
@@ -226,6 +245,7 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     final confirmed = await _showSaveConfirmDialog();
     if (!confirmed) return;
 
+    widget.record.caseReferenceNo = _referenceController.text.trim();
     widget.record.heading = heading;
     widget.record.details = paragraph;
     widget.record.headingFont = availableFonts[_headingFontIndex].displayName;
@@ -302,18 +322,28 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     );
   }
 
-  TextStyle _headingTextStyle() {
+  TextStyle _referenceTextStyle(BuildContext context) {
+    final c = context.policeTextPrimary;
     if (_lang.isUrdu) {
-      return _lang.urduStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary);
+      return _lang.urduStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c);
     }
-    return availableFonts[_headingFontIndex].builder(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary);
+    return GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: c);
   }
 
-  TextStyle _paragraphTextStyle() {
+  TextStyle _headingTextStyle(BuildContext context) {
+    final c = context.policeTextPrimary;
     if (_lang.isUrdu) {
-      return _lang.urduStyle(fontSize: 16, fontWeight: FontWeight.w400, color: AppColors.textPrimary).copyWith(height: 2.0);
+      return _lang.urduStyle(fontSize: 22, fontWeight: FontWeight.w700, color: c);
     }
-    return availableFonts[_paragraphFontIndex].builder(fontSize: 15, fontWeight: FontWeight.w400, color: AppColors.textPrimary).copyWith(height: 1.7);
+    return availableFonts[_headingFontIndex].builder(fontSize: 20, fontWeight: FontWeight.w700, color: c);
+  }
+
+  TextStyle _paragraphTextStyle(BuildContext context) {
+    final c = context.policeTextPrimary;
+    if (_lang.isUrdu) {
+      return _lang.urduStyle(fontSize: 16, fontWeight: FontWeight.w400, color: c).copyWith(height: 2.0);
+    }
+    return availableFonts[_paragraphFontIndex].builder(fontSize: 15, fontWeight: FontWeight.w400, color: c).copyWith(height: 1.7);
   }
 
   @override
@@ -333,7 +363,7 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
         }
       },
       child: Scaffold(
-        backgroundColor: AppColors.surface,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: SafeArea(
           child: Column(
             children: [
@@ -347,11 +377,22 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
                           const SizedBox(height: 16),
-                          _buildVoiceSection(),
+                          if (!_speechAvailable) ...[
+                            _MicPermissionBanner(lang: _lang),
+                            const SizedBox(height: 20),
+                          ],
+                          _buildReferenceSection(),
                           const SizedBox(height: 28),
                           _buildHeadingSection(),
                           const SizedBox(height: 28),
                           _buildParagraphSection(),
+                          if (kMediaEnabled && widget.record.key != null) ...[
+                            const SizedBox(height: 20),
+                            CaseMediaSection(
+                              caseId: widget.record.key.toString(),
+                              isEditable: true,
+                            ),
+                          ],
                           const SizedBox(height: 36),
                           ConfirmButton(
                             onPressed: _onSave,
@@ -390,11 +431,11 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
             icon: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.policeIconButtonBg,
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 2))],
               ),
-              child: const Icon(Icons.arrow_back_rounded, size: 20, color: AppColors.textPrimary),
+              child: Icon(Icons.arrow_back_rounded, size: 20, color: context.policeTextPrimary),
             ),
           ),
           const SizedBox(width: 8),
@@ -402,8 +443,8 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
             child: Text(
               _lang.editCaseTitle,
               style: _lang.isUrdu
-                  ? _lang.urduStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)
-                  : GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                  ? _lang.urduStyle(fontSize: 18, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                  : GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
               textDirection: _lang.textDirection,
             ),
           ),
@@ -413,89 +454,62 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     );
   }
 
-  Widget _buildVoiceSection() {
-    final hasTarget = _activeField != null;
-    final targetLabel = _activeField == _ActiveField.heading
-        ? _lang.caseHeadingLabel
-        : _activeField == _ActiveField.paragraph
-            ? _lang.caseDetailsLabel
-            : _lang.noTargetText;
+  Widget _buildReferenceSection() {
+    final isLive = _wantListening && _recordingField == _ActiveField.reference;
+    final dir = _lang.textDirection;
 
-    return GlassCard(
-      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
-      child: Column(
-        children: [
-          SectionLabel(text: _lang.voiceInputLabel, icon: Icons.record_voice_over_rounded),
-          const SizedBox(height: 8),
-          Text(
-            _isListening
-                ? _lang.listeningText
-                : _speechAvailable
-                    ? hasTarget ? _lang.tapMicText : _lang.selectFieldText
-                    : _lang.initializingText,
-            style: Theme.of(context).textTheme.bodyMedium,
-            textDirection: _lang.textDirection,
-          ),
-          const SizedBox(height: 6),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            child: Text(
-              _lang.targetText(targetLabel),
-              key: ValueKey(targetLabel),
-              style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: hasTarget ? AppColors.accent : AppColors.textHint),
-            ),
-          ),
-          const SizedBox(height: 24),
-          PulseMicButton(
-            isListening: _isListening,
-            isAvailable: _speechAvailable && hasTarget,
-            onTap: _toggleListening,
-          ),
-          if (!_speechAvailable) ...[
-            const SizedBox(height: 16),
-            _MicPermissionBanner(lang: _lang),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SectionLabel(text: _lang.caseReferenceLabel, icon: Icons.tag_rounded),
           ],
-          const SizedBox(height: 20),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 400),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: _isListening
-                  ? AppColors.error.withValues(alpha: 0.08)
-                  : _speechAvailable ? AppColors.accent.withValues(alpha: 0.06) : Colors.grey.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(30),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 400),
-                  width: 8, height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _isListening ? AppColors.error : _speechAvailable ? AppColors.accent : AppColors.textHint,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                AnimatedDefaultTextStyle(
-                  duration: const Duration(milliseconds: 300),
-                  style: GoogleFonts.inter(
-                    fontSize: 13, fontWeight: FontWeight.w600,
-                    color: _isListening ? AppColors.error : _speechAvailable ? AppColors.accent : AppColors.textHint,
-                  ),
-                  child: Text(_isListening ? _lang.recordingText : _speechAvailable ? _lang.readyText : _lang.unavailableText),
-                ),
-              ],
+        ),
+        const SizedBox(height: 4),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: isLive ? Border.all(color: AppColors.accent, width: 2) : null,
+            boxShadow: isLive
+                ? [
+                    BoxShadow(
+                      color: AppColors.accent.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
+          ),
+          child: GlassCard(
+            padding: EdgeInsets.zero,
+            child: TextField(
+              controller: _referenceController,
+              focusNode: _referenceFocus,
+              maxLines: 1,
+              textDirection: dir,
+              textAlign: _lang.isUrdu ? TextAlign.right : TextAlign.left,
+              style: _referenceTextStyle(context),
+              decoration: InputDecoration(
+                hintText: _lang.caseReferenceHint,
+                hintTextDirection: dir,
+                hintStyle: _referenceTextStyle(context).copyWith(color: context.policeTextHint.withValues(alpha: 0.5)),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                suffixIcon: _buildInlineMicButton(_ActiveField.reference),
+                suffixIconConstraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              ),
+              textInputAction: TextInputAction.next,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildHeadingSection() {
-    final isTarget = _activeField == _ActiveField.heading;
-    final isLive = _isListening && _lockedField == _ActiveField.heading;
+    final isLive = _wantListening && _recordingField == _ActiveField.heading;
     final dir = _lang.textDirection;
 
     return Column(
@@ -506,8 +520,6 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
             SectionLabel(text: _lang.caseHeadingLabel, icon: Icons.title_rounded),
             const SizedBox(width: 8),
             if (!_lang.isUrdu) FontPickerButton(selectedIndex: _headingFontIndex, onChanged: (i) => setState(() => _headingFontIndex = i)),
-            const Spacer(),
-            if (isLive) _buildListeningBadge(),
           ],
         ),
         const SizedBox(height: 4),
@@ -515,7 +527,16 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
           duration: const Duration(milliseconds: 300),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: isTarget ? Border.all(color: isLive ? AppColors.error : AppColors.accent, width: 2) : null,
+            border: isLive ? Border.all(color: AppColors.accent, width: 2) : null,
+            boxShadow: isLive
+                ? [
+                    BoxShadow(
+                      color: AppColors.accent.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
           ),
           child: GlassCard(
             padding: EdgeInsets.zero,
@@ -525,16 +546,17 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
               maxLines: 1,
               textDirection: dir,
               textAlign: _lang.isUrdu ? TextAlign.right : TextAlign.left,
-              style: _headingTextStyle(),
+              style: _headingTextStyle(context),
               decoration: InputDecoration(
                 hintText: _lang.headingHint,
                 hintTextDirection: dir,
-                hintStyle: _headingTextStyle().copyWith(color: AppColors.textHint.withValues(alpha: 0.5)),
+                hintStyle: _headingTextStyle(context).copyWith(color: context.policeTextHint.withValues(alpha: 0.5)),
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                suffixIcon: _buildInlineMicButton(_ActiveField.heading),
+                suffixIconConstraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               ),
               textInputAction: TextInputAction.next,
-              onTap: () => _selectField(_ActiveField.heading),
             ),
           ),
         ),
@@ -543,8 +565,7 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
   }
 
   Widget _buildParagraphSection() {
-    final isTarget = _activeField == _ActiveField.paragraph;
-    final isLive = _isListening && _lockedField == _ActiveField.paragraph;
+    final isLive = _wantListening && _recordingField == _ActiveField.paragraph;
     final dir = _lang.textDirection;
 
     return Column(
@@ -555,8 +576,6 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
             SectionLabel(text: _lang.caseDetailsLabel, icon: Icons.notes_rounded),
             const SizedBox(width: 8),
             if (!_lang.isUrdu) FontPickerButton(selectedIndex: _paragraphFontIndex, onChanged: (i) => setState(() => _paragraphFontIndex = i)),
-            const Spacer(),
-            if (isLive) _buildListeningBadge(),
           ],
         ),
         const SizedBox(height: 4),
@@ -564,7 +583,16 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
           duration: const Duration(milliseconds: 300),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: isTarget ? Border.all(color: isLive ? AppColors.error : AppColors.accent, width: 2) : null,
+            border: isLive ? Border.all(color: AppColors.accent, width: 2) : null,
+            boxShadow: isLive
+                ? [
+                    BoxShadow(
+                      color: AppColors.accent.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
           ),
           child: GlassCard(
             padding: EdgeInsets.zero,
@@ -574,15 +602,16 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
               maxLines: 6,
               textDirection: dir,
               textAlign: _lang.isUrdu ? TextAlign.right : TextAlign.left,
-              style: _paragraphTextStyle(),
+              style: _paragraphTextStyle(context),
               decoration: InputDecoration(
                 hintText: _lang.detailsHint,
                 hintTextDirection: dir,
-                hintStyle: _paragraphTextStyle().copyWith(color: AppColors.textHint.withValues(alpha: 0.5)),
+                hintStyle: _paragraphTextStyle(context).copyWith(color: context.policeTextHint.withValues(alpha: 0.5)),
                 border: InputBorder.none,
-                contentPadding: const EdgeInsets.all(20),
+                contentPadding: const EdgeInsets.fromLTRB(20, 20, 8, 20),
+                suffixIcon: _buildInlineMicButton(_ActiveField.paragraph),
+                suffixIconConstraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               ),
-              onTap: () => _selectField(_ActiveField.paragraph),
             ),
           ),
         ),
@@ -590,18 +619,43 @@ class _EditCaseScreenState extends State<EditCaseScreen> with TickerProviderStat
     );
   }
 
-  Widget _buildListeningBadge() {
-    return Container(
-      margin: const EdgeInsets.only(right: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: AppColors.error.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(width: 6, height: 6, decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.error)),
-          const SizedBox(width: 6),
-          Text('LIVE', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.error, letterSpacing: 1)),
-        ],
+  Widget _buildInlineMicButton(_ActiveField field) {
+    final isActive = _wantListening && _recordingField == field;
+    final iconColor = isActive ? AppColors.error : AppColors.accent;
+    return Padding(
+      padding: const EdgeInsets.only(right: 10),
+      child: GestureDetector(
+        onTap: () => _toggleListeningForField(field),
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Align(
+                alignment: Alignment.center,
+                child: Icon(Icons.mic_rounded, size: 24, color: iconColor),
+              ),
+              if (isActive)
+                Positioned(
+                  right: 1,
+                  top: 2,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 220),
+                    opacity: _isListening ? 1 : 0.45,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.error,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -631,8 +685,8 @@ class _MicPermissionBanner extends StatelessWidget {
                 lang.micPermissionText,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 12, color: AppColors.textSecondary)
-                    : GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary, height: 1.4),
+                    ? lang.urduStyle(fontSize: 12, color: context.policeTextSecondary)
+                    : GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: context.policeTextSecondary, height: 1.4),
               ),
             ),
             const SizedBox(width: 8),
@@ -656,9 +710,10 @@ class _DiscardDialogContent extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 28),
         padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
         decoration: BoxDecoration(
-          color: AppColors.surfaceCard,
+          color: context.policeCard,
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: AppColors.shadowMedium, blurRadius: 40, offset: const Offset(0, 12))],
+          border: Border.all(color: context.policeBorder.withValues(alpha: 0.5)),
+          boxShadow: [BoxShadow(color: context.policeDialogShadow, blurRadius: 40, offset: const Offset(0, 12))],
         ),
         child: Material(
           color: Colors.transparent,
@@ -676,8 +731,8 @@ class _DiscardDialogContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary)
-                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
               ),
               const SizedBox(height: 8),
               Text(
@@ -685,8 +740,8 @@ class _DiscardDialogContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 14, color: AppColors.textSecondary)
-                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: AppColors.textSecondary, height: 1.5),
+                    ? lang.urduStyle(fontSize: 14, color: context.policeTextSecondary)
+                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: context.policeTextSecondary, height: 1.5),
               ),
               const SizedBox(height: 28),
               Row(
@@ -716,9 +771,10 @@ class _SaveDialogContent extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 28),
         padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
         decoration: BoxDecoration(
-          color: AppColors.surfaceCard,
+          color: context.policeCard,
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: AppColors.shadowMedium, blurRadius: 40, offset: const Offset(0, 12))],
+          border: Border.all(color: context.policeBorder.withValues(alpha: 0.5)),
+          boxShadow: [BoxShadow(color: context.policeDialogShadow, blurRadius: 40, offset: const Offset(0, 12))],
         ),
         child: Material(
           color: Colors.transparent,
@@ -736,8 +792,8 @@ class _SaveDialogContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary)
-                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
               ),
               const SizedBox(height: 8),
               Text(
@@ -745,8 +801,8 @@ class _SaveDialogContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 14, color: AppColors.textSecondary)
-                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: AppColors.textSecondary, height: 1.5),
+                    ? lang.urduStyle(fontSize: 14, color: context.policeTextSecondary)
+                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: context.policeTextSecondary, height: 1.5),
               ),
               const SizedBox(height: 28),
               Row(
@@ -793,7 +849,8 @@ class _DialogBtnState extends State<_DialogBtn> with SingleTickerProviderStateMi
   Widget build(BuildContext context) {
     final textColor = widget.isDestructive
         ? AppColors.error
-        : widget.isPrimary ? Colors.white : AppColors.textSecondary;
+        : widget.isPrimary ? Colors.white : context.policeTextSecondary;
+    final borderNeutral = context.isPoliceDark ? AppColors.darkBorder : Colors.grey.shade300;
 
     return GestureDetector(
       onTapDown: (_) => _ctrl.forward(),
@@ -808,7 +865,7 @@ class _DialogBtnState extends State<_DialogBtn> with SingleTickerProviderStateMi
             gradient: widget.isPrimary ? const LinearGradient(colors: AppColors.confirmGradient) : null,
             color: widget.isPrimary ? null : Colors.transparent,
             border: widget.isPrimary ? null : Border.all(
-              color: widget.isDestructive ? AppColors.error.withValues(alpha: 0.4) : Colors.grey.shade300,
+              color: widget.isDestructive ? AppColors.error.withValues(alpha: 0.4) : borderNeutral,
               width: 1.5,
             ),
           ),

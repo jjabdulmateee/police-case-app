@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import '../core/constants.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/theme_context.dart';
 import '../models/case_record.dart';
+import '../services/case_media_service.dart';
 import '../services/language_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/language_toggle.dart';
+import 'document_format_studio_screen.dart';
+import 'printer_settings_screen.dart';
+import '../services/printer_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,21 +22,45 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final LanguageService _lang = LanguageService();
+  final ThemeService _theme = ThemeService();
+  final PrinterService _printer = PrinterService();
+  final CaseMediaService _caseMedia = CaseMediaService();
 
   @override
   void initState() {
     super.initState();
     _lang.addListener(_onLangChanged);
     _lang.init();
+    _theme.addListener(_onThemeChanged);
+    _theme.init();
+    _printer.addListener(_onPrinterChanged);
+    _caseMedia.addListener(_onCaseMediaChanged);
   }
 
   @override
   void dispose() {
     _lang.removeListener(_onLangChanged);
+    _theme.removeListener(_onThemeChanged);
+    _printer.removeListener(_onPrinterChanged);
+    _caseMedia.removeListener(_onCaseMediaChanged);
     super.dispose();
   }
 
   void _onLangChanged() => setState(() {});
+  void _onThemeChanged() => setState(() {});
+  void _onPrinterChanged() => setState(() {});
+  void _onCaseMediaChanged() => setState(() {});
+
+  String _formatStorageBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
 
   Future<void> _confirmClearAll() async {
     final box = Hive.box<CaseRecord>('cases');
@@ -70,7 +101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.surface,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: CustomScrollView(
           physics: const BouncingScrollPhysics(),
@@ -81,6 +112,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
                   _buildLanguageSection(),
+                  const SizedBox(height: 24),
+                  _buildDocumentFormatsRow(),
+                  const SizedBox(height: 24),
+                  _buildPrinterSection(),
+                  if (kMediaEnabled) ...[
+                    const SizedBox(height: 24),
+                    _buildStorageSection(),
+                  ],
                   const SizedBox(height: 24),
                   _buildDataSection(),
                   const SizedBox(height: 24),
@@ -103,13 +142,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text(
             _lang.settingsLabel,
-            style: GoogleFonts.inter(fontSize: 32, fontWeight: FontWeight.w800, color: AppColors.textPrimary, letterSpacing: -0.8),
+            style: GoogleFonts.inter(fontSize: 32, fontWeight: FontWeight.w800, color: context.policeTextPrimary, letterSpacing: -0.8),
             textDirection: _lang.textDirection,
           ),
           const SizedBox(height: 4),
           Text(
             _lang.isUrdu ? 'ایپ کی ترجیحات اور ترتیب' : 'App preferences and configuration',
-            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400, color: AppColors.textSecondary),
+            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400, color: context.policeTextSecondary),
             textDirection: _lang.textDirection,
           ),
         ],
@@ -126,7 +165,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(width: 8),
           Text(
             title,
-            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textHint, letterSpacing: 0.5),
+            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: context.policeTextHint, letterSpacing: 0.5),
             textDirection: _lang.textDirection,
           ),
         ],
@@ -143,30 +182,408 @@ class _SettingsScreenState extends State<SettingsScreen> {
           width: double.infinity,
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: AppColors.surfaceCard,
+            color: context.policeCard,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade100, width: 1.5),
-            boxShadow: const [BoxShadow(color: AppColors.shadowLight, blurRadius: 12, offset: Offset(0, 2))],
+            border: Border.all(color: context.policeBorder.withValues(alpha: 0.85), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: context.isPoliceDark ? Colors.black.withValues(alpha: 0.35) : AppColors.shadowLight,
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _lang.isUrdu ? 'ایپ کی زبان' : 'App Language',
-                      style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _lang.isUrdu ? 'ایپ کی زبان' : 'App Language',
+                          style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: context.policeTextPrimary),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _lang.isUrdu ? 'اردو فعال ہے' : 'English active',
+                          style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: context.policeTextSecondary),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _lang.isUrdu ? 'اردو فعال ہے' : 'English active',
-                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: AppColors.textSecondary),
+                  ),
+                  LanguageToggle(lang: _lang),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Divider(height: 1, color: context.policeDivider),
+              ),
+              Row(
+                children: [
+                  Icon(
+                    _theme.isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+                    color: AppColors.accent,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _lang.appearanceLabel,
+                          style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: context.policeTextPrimary),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _theme.isDark ? _lang.darkModeLabel : _lang.lightModeLabel,
+                          style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: context.policeTextSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _theme.isDark,
+                    onChanged: (v) => _theme.setDark(v),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDocumentFormatsRow() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(_lang.documentFormatsSectionLabel.toUpperCase(), Icons.description_outlined),
+        Material(
+          color: context.policeCard,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(builder: (_) => const DocumentFormatStudioScreen()),
+              );
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: context.policeBorder.withValues(alpha: 0.85), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: context.isPoliceDark ? Colors.black.withValues(alpha: 0.35) : AppColors.shadowLight,
+                    blurRadius: 12,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.document_scanner_outlined, color: AppColors.accent, size: 22),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _lang.documentFormatsTileTitle,
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: context.policeTextPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _lang.documentFormatsTileSubtitle,
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            height: 1.35,
+                            color: context.policeTextSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: context.policeTextHint),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPrinterSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(_lang.printerSectionTitle.toUpperCase(), Icons.print_rounded),
+        ListenableBuilder(
+          listenable: _printer,
+          builder: (context, _) {
+            final connected = _printer.isDirectPrintReady && _printer.connectedDeviceName != null;
+            final name = connected ? _printer.connectedDeviceName! : _lang.printerStatusNone;
+            return Material(
+              color: context.policeCard,
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(builder: (_) => const PrinterSettingsScreen()),
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: context.policeBorder.withValues(alpha: 0.85), width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: context.isPoliceDark
+                            ? Colors.black.withValues(alpha: 0.35)
+                            : AppColors.shadowLight,
+                        blurRadius: 12,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.accent.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.print_outlined, color: AppColors.accent, size: 22),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _lang.printerSettingsTitle,
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: context.policeTextPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _lang.printerTileSubtitle,
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                height: 1.35,
+                                color: context.policeTextSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: connected ? AppColors.success : context.policeTextHint,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                      color: context.policeTextSecondary,
+                                    ),
+                                    textDirection: _lang.textDirection,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, color: context.policeTextHint),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmClearAllMedia() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.policeCard,
+        title: Text(
+          _lang.clearAllMediaDialogTitle,
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700, color: context.policeTextPrimary),
+          textDirection: _lang.textDirection,
+        ),
+        content: Text(
+          _lang.clearAllMediaDialogBody,
+          style: GoogleFonts.inter(color: context.policeTextSecondary),
+          textDirection: _lang.textDirection,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_lang.isUrdu ? 'منسوخ' : 'Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(_lang.clearAllMediaLabel),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _caseMedia.clearAllMedia();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_lang.isUrdu ? 'میڈیا حذف ہو گیا' : 'All attachment files removed'),
+            backgroundColor: AppColors.success,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildStorageSection() {
+    if (!kMediaEnabled) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(_lang.storageSectionLabel.toUpperCase(), Icons.sd_storage_rounded),
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: context.policeCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: context.policeBorder.withValues(alpha: 0.85), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: context.isPoliceDark
+                    ? Colors.black.withValues(alpha: 0.35)
+                    : AppColors.shadowLight,
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.perm_media_outlined, color: AppColors.accent, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _lang.storageMediaCaseFilesLabel,
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: context.policeTextPrimary,
+                            ),
+                            textDirection: _lang.textDirection,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatStorageBytes(_caseMedia.getTotalMediaSize()),
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.accent,
+                            ),
+                            textDirection: _lang.textDirection,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
-              LanguageToggle(lang: _lang),
+              Divider(height: 1, color: context.policeDivider),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _caseMedia.getTotalMediaSize() > 0 ? _confirmClearAllMedia : null,
+                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_sweep_outlined,
+                          size: 20,
+                          color: _caseMedia.getTotalMediaSize() > 0
+                              ? AppColors.error
+                              : context.policeTextHint,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          _lang.clearAllMediaLabel,
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: _caseMedia.getTotalMediaSize() > 0
+                                ? AppColors.error
+                                : context.policeTextHint,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -186,10 +603,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             return Container(
               width: double.infinity,
               decoration: BoxDecoration(
-                color: AppColors.surfaceCard,
+                color: context.policeCard,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.shade100, width: 1.5),
-                boxShadow: const [BoxShadow(color: AppColors.shadowLight, blurRadius: 12, offset: Offset(0, 2))],
+                border: Border.all(color: context.policeBorder.withValues(alpha: 0.85), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: context.isPoliceDark ? Colors.black.withValues(alpha: 0.35) : AppColors.shadowLight,
+                    blurRadius: 12,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Column(
                 children: [
@@ -212,12 +635,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             children: [
                               Text(
                                 _lang.isUrdu ? 'محفوظ مقدمات' : 'Saved Cases',
-                                style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                                style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: context.policeTextPrimary),
                               ),
                               const SizedBox(height: 2),
                               Text(
                                 _lang.totalCasesText(count),
-                                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: AppColors.textSecondary),
+                                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: context.policeTextSecondary),
                               ),
                             ],
                           ),
@@ -225,7 +648,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ),
-                  Divider(height: 1, color: Colors.grey.shade100),
+                  Divider(height: 1, color: context.policeDivider),
                   Material(
                     color: Colors.transparent,
                     child: InkWell(
@@ -235,14 +658,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                         child: Row(
                           children: [
-                            Icon(Icons.delete_outline_rounded, size: 20, color: count > 0 ? AppColors.error : AppColors.textHint),
+                            Icon(Icons.delete_outline_rounded, size: 20, color: count > 0 ? AppColors.error : context.policeTextHint),
                             const SizedBox(width: 12),
                             Text(
                               _lang.clearAllCasesLabel,
                               style: GoogleFonts.inter(
                                 fontSize: 15,
                                 fontWeight: FontWeight.w500,
-                                color: count > 0 ? AppColors.error : AppColors.textHint,
+                                color: count > 0 ? AppColors.error : context.policeTextHint,
                               ),
                             ),
                           ],
@@ -268,10 +691,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           width: double.infinity,
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: AppColors.surfaceCard,
+            color: context.policeCard,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade100, width: 1.5),
-            boxShadow: const [BoxShadow(color: AppColors.shadowLight, blurRadius: 12, offset: Offset(0, 2))],
+            border: Border.all(color: context.policeBorder.withValues(alpha: 0.85), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: context.isPoliceDark ? Colors.black.withValues(alpha: 0.35) : AppColors.shadowLight,
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             children: [
@@ -286,25 +715,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               Text(
                 'Police Case Docs',
-                style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
               ),
               const SizedBox(height: 4),
               Text(
                 'Version 1.0.0',
-                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: AppColors.textHint),
+                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: context.policeTextHint),
               ),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.04),
+                  color: AppColors.accent.withValues(alpha: context.isPoliceDark ? 0.1 : 0.06),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   _lang.isUrdu ? 'خیبر پختونخواہ پولیس افسران کے لیے' : 'Made for KPK Police Officers',
                   style: _lang.isUrdu
-                      ? _lang.urduStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary)
-                      : GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
+                      ? _lang.urduStyle(fontSize: 12, fontWeight: FontWeight.w500, color: context.policeTextSecondary)
+                      : GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: context.policeTextSecondary),
                   textDirection: _lang.textDirection,
                 ),
               ),
@@ -328,9 +757,10 @@ class _ClearAllDialog extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 28),
         padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
         decoration: BoxDecoration(
-          color: AppColors.surfaceCard,
+          color: context.policeCard,
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: AppColors.shadowMedium, blurRadius: 40, offset: const Offset(0, 12))],
+          border: Border.all(color: context.policeBorder.withValues(alpha: 0.5)),
+          boxShadow: [BoxShadow(color: context.policeDialogShadow, blurRadius: 40, offset: const Offset(0, 12))],
         ),
         child: Material(
           color: Colors.transparent,
@@ -348,8 +778,8 @@ class _ClearAllDialog extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary)
-                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ? lang.urduStyle(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                    : GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
               ),
               const SizedBox(height: 8),
               Text(
@@ -357,8 +787,8 @@ class _ClearAllDialog extends StatelessWidget {
                 textAlign: TextAlign.center,
                 textDirection: lang.textDirection,
                 style: lang.isUrdu
-                    ? lang.urduStyle(fontSize: 14, color: AppColors.textSecondary)
-                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: AppColors.textSecondary, height: 1.5),
+                    ? lang.urduStyle(fontSize: 14, color: context.policeTextSecondary)
+                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: context.policeTextSecondary, height: 1.5),
               ),
               const SizedBox(height: 28),
               Row(
@@ -403,7 +833,8 @@ class _SettingsDialogBtnState extends State<_SettingsDialogBtn> with SingleTicke
 
   @override
   Widget build(BuildContext context) {
-    final textColor = widget.isDestructive ? Colors.white : AppColors.textSecondary;
+    final textColor = widget.isDestructive ? Colors.white : context.policeTextSecondary;
+    final borderSide = context.isPoliceDark ? AppColors.darkBorder : Colors.grey.shade300;
     return GestureDetector(
       onTapDown: (_) => _ctrl.forward(),
       onTapUp: (_) { _ctrl.reverse(); widget.onTap(); },
@@ -416,7 +847,7 @@ class _SettingsDialogBtnState extends State<_SettingsDialogBtn> with SingleTicke
             borderRadius: BorderRadius.circular(14),
             gradient: widget.isDestructive ? const LinearGradient(colors: [Color(0xFFE74C3C), Color(0xFFC0392B)]) : null,
             color: widget.isDestructive ? null : Colors.transparent,
-            border: widget.isDestructive ? null : Border.all(color: Colors.grey.shade300, width: 1.5),
+            border: widget.isDestructive ? null : Border.all(color: borderSide, width: 1.5),
           ),
           alignment: Alignment.center,
           child: Text(

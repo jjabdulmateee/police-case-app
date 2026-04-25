@@ -41,4 +41,14 @@ class AppColors {
 
   static const Color shadowLight = Color(0x1A0A1929);
   static const Color shadowMedium = Color(0x330A1929);
+
+  // Dark theme palette
+  static const Color darkBackground = Color(0xFF0A0E1A);
+  static const Color darkSurface = Color(0xFF111827);
+  static const Color darkCard = Color(0xFF1A2235);
+  static const Color darkAppBar = Color(0xFF0D1421);
+  static const Color darkTextPrimary = Color(0xFFF0F4FF);
+  static const Color darkTextSecondary = Color(0xFF8899AA);
+  static const Color darkBorder = Color(0xFF2A3A4A);
+  static const Color darkShadow = Color(0x66000000);
 }

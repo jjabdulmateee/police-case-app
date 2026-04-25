@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../core/theme/app_colors.dart';
+import '../core/theme/theme_context.dart';
 
 class GlassCard extends StatelessWidget {
   final Widget child;
@@ -13,21 +13,22 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = context.isPoliceDark;
     return Container(
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: AppColors.surfaceCard,
+        color: context.policeCard,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: Colors.grey.shade100,
+          color: dark ? context.policeBorder : Colors.grey.shade100,
           width: 1.5,
         ),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: AppColors.shadowLight,
-            blurRadius: 20,
-            offset: Offset(0, 4),
+            color: dark ? Colors.black.withValues(alpha: 0.35) : const Color(0x1A0A1929),
+            blurRadius: dark ? 24 : 20,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
