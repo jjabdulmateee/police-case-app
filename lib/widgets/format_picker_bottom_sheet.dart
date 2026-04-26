@@ -9,6 +9,14 @@ import '../services/language_service.dart';
 import '../screens/quick_add_format_screen.dart';
 import 'delete_format_confirm_dialog.dart';
 
+String _displayFormatName(DocumentFormatTemplate t, LanguageService lang) {
+  if (lang.isUrdu && t.nameUrdu != null && t.nameUrdu!.trim().isNotEmpty) {
+    return t.nameUrdu!.trim();
+  }
+  if (t.id == DocumentFormatIds.fir && lang.isUrdu) return 'FIR';
+  return t.name;
+}
+
 /// [null] = dismissed without choice. [empty string] = no format. [non-empty] = format id.
 Future<String?> showFormatPickerBottomSheet({
   required BuildContext context,
@@ -326,7 +334,7 @@ class _FormatThumbCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                     child: Text(
-                      t.name,
+                      _displayFormatName(t, lang),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.inter(
@@ -489,7 +497,7 @@ class _FormatListTile extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                t.id == DocumentFormatIds.fir && lang.isUrdu ? 'FIR' : t.name,
+                                _displayFormatName(t, lang),
                                 style: GoogleFonts.inter(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w800,

@@ -13,8 +13,10 @@ import '../services/document_format_service.dart';
 import '../services/language_service.dart';
 import '../services/pdf_service.dart';
 import '../services/printer_service.dart';
+import '../models/form_field_definition.dart';
 import '../widgets/case_media_section.dart';
 import '../widgets/font_picker_button.dart';
+import 'builtin_form_screen.dart';
 import 'edit_case_screen.dart';
 
 String _formatLineForCase(CaseRecord live) {
@@ -189,52 +191,57 @@ class CaseDetailScreen extends StatelessWidget {
                           ),
                         ],
                         const SizedBox(height: 20),
-                        if (live.heading.isNotEmpty)
-                          SizedBox(
-                            width: double.infinity,
-                            child: Text(
-                              live.heading,
-                              textDirection: dir,
-                              style: live.isUrdu
-                                  ? GoogleFonts.notoNastaliqUrdu(
-                                      fontSize: 26, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
-                                  : headingFont.builder(
-                                      fontSize: 26, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
+                        if (live.formFieldValues.isNotEmpty) ...[
+                          _BuiltinCaseFormValues(record: live),
+                          const SizedBox(height: 16),
+                        ] else ...[
+                          if (live.heading.isNotEmpty)
+                            SizedBox(
+                              width: double.infinity,
+                              child: Text(
+                                live.heading,
+                                textDirection: dir,
+                                style: live.isUrdu
+                                    ? GoogleFonts.notoNastaliqUrdu(
+                                        fontSize: 26, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                                    : headingFont.builder(
+                                        fontSize: 26, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
+                              ),
+                            ),
+                          const SizedBox(height: 20),
+                          Container(
+                            height: 1,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  AppColors.accent,
+                                  AppColors.accent.withValues(alpha: 0.15),
+                                  Colors.transparent,
+                                ],
+                              ),
                             ),
                           ),
-                        const SizedBox(height: 20),
-                        Container(
-                          height: 1,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                AppColors.accent,
-                                AppColors.accent.withValues(alpha: 0.15),
-                                Colors.transparent,
-                              ],
+                          const SizedBox(height: 24),
+                          if (live.details.isNotEmpty)
+                            SizedBox(
+                              width: double.infinity,
+                              child: Text(
+                                live.details,
+                                textDirection: dir,
+                                style: live.isUrdu
+                                    ? GoogleFonts.notoNastaliqUrdu(
+                                        fontSize: 15, fontWeight: FontWeight.w400, color: bodyDetailColor,
+                                      ).copyWith(height: 2.2)
+                                    : detailsFont
+                                        .builder(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w400,
+                                          color: bodyDetailColor,
+                                        )
+                                        .copyWith(height: 1.85),
+                              ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        if (live.details.isNotEmpty)
-                          SizedBox(
-                            width: double.infinity,
-                            child: Text(
-                              live.details,
-                              textDirection: dir,
-                              style: live.isUrdu
-                                  ? GoogleFonts.notoNastaliqUrdu(
-                                      fontSize: 15, fontWeight: FontWeight.w400, color: bodyDetailColor,
-                                    ).copyWith(height: 2.2)
-                                  : detailsFont
-                                      .builder(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w400,
-                                        color: bodyDetailColor,
-                                      )
-                                      .copyWith(height: 1.85),
-                            ),
-                          ),
+                        ],
                         if (kMediaEnabled && live.mediaIds.isNotEmpty) ...[
                           const SizedBox(height: 24),
                           CaseMediaSection(
@@ -325,6 +332,27 @@ class CaseDetailScreen extends StatelessWidget {
   }
 
   void _openEdit(BuildContext context, CaseRecord live) {
+    final fmt = DocumentFormatService()
+        .getById(live.formId.isNotEmpty ? live.formId : live.caseFormatId);
+    if (fmt != null && fmt.hasBuiltinFormFields) {
+      Navigator.of(context).push(PageRouteBuilder(
+        pageBuilder: (_, __, ___) => BuiltinFormScreen(
+          format: fmt,
+          initialValues: Map<String, String>.from(live.formFieldValues),
+          existingRecord: live,
+        ),
+        transitionsBuilder: (_, anim, __, child) => FadeTransition(
+          opacity: anim,
+          child: SlideTransition(
+            position: Tween<Offset>(begin: const Offset(0.03, 0), end: Offset.zero)
+                .animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+            child: child,
+          ),
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+      ));
+      return;
+    }
     Navigator.of(context).push(PageRouteBuilder(
       pageBuilder: (_, __, ___) => EditCaseScreen(record: live, caseNumber: caseNumber),
       transitionsBuilder: (_, anim, __, child) => FadeTransition(
@@ -402,6 +430,161 @@ class CaseDetailScreen extends StatelessWidget {
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     final min = dt.minute.toString().padLeft(2, '0');
     return '${days[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}, ${dt.year} · $h:$min $ampm';
+  }
+}
+
+/// Read-only structured display for [CaseRecord.formFieldValues] (built-in paper forms).
+class _BuiltinCaseFormValues extends StatelessWidget {
+  final CaseRecord record;
+  const _BuiltinCaseFormValues({required this.record});
+
+  @override
+  Widget build(BuildContext context) {
+    final tpl = DocumentFormatService().getById(record.formId.isNotEmpty ? record.formId : record.caseFormatId);
+    final defs = tpl?.builtinFormFields;
+    final dir = record.isUrdu ? TextDirection.rtl : TextDirection.ltr;
+    final bodyColor = context.isPoliceDark ? AppColors.darkTextSecondary : const Color(0xFF2D3748);
+
+    if (defs != null && defs.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          for (final f in defs) ..._widgetsForField(context, f, record, dir, bodyColor),
+        ],
+      );
+    }
+
+    final keys = record.formFieldValues.keys.toList()..sort();
+    return Column(
+      crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        for (final k in keys)
+          if ((record.formFieldValues[k] ?? '').trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    k,
+                    textDirection: dir,
+                    style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: context.policeTextHint),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    record.formFieldValues[k] ?? '',
+                    textDirection: dir,
+                    style: record.isUrdu
+                        ? GoogleFonts.notoNastaliqUrdu(fontSize: 15, color: bodyColor, height: 1.8)
+                        : GoogleFonts.inter(fontSize: 14, color: bodyColor, height: 1.5),
+                  ),
+                ],
+              ),
+            ),
+      ],
+    );
+  }
+
+  List<Widget> _widgetsForField(
+    BuildContext context,
+    FormFieldDefinition f,
+    CaseRecord record,
+    TextDirection dir,
+    Color bodyColor,
+  ) {
+    final v = record.formFieldValues;
+    if (f.type == FormFieldType.table) {
+      final cols = f.tableColumns ?? [];
+      final out = <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 6),
+          child: Text(
+            f.labelForLanguage(record.isUrdu),
+            textDirection: dir,
+            style: record.isUrdu
+                ? GoogleFonts.notoNastaliqUrdu(fontSize: 16, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                : GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w800, color: context.policeTextPrimary),
+          ),
+        ),
+      ];
+      for (var r = 0; r < f.tableRowCount; r++) {
+        var rowEmpty = true;
+        for (var c = 0; c < cols.length; c++) {
+          if ((v[formCellKey(f.id, r, c)] ?? '').trim().isNotEmpty) rowEmpty = false;
+        }
+        if (rowEmpty) continue;
+        out.add(
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              border: Border.all(color: context.policeBorder.withValues(alpha: 0.85)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '— ${r + 1}',
+                  style: GoogleFonts.inter(fontSize: 10, color: context.policeTextHint),
+                ),
+                const SizedBox(height: 6),
+                for (var c = 0; c < cols.length; c++)
+                  if ((v[formCellKey(f.id, r, c)] ?? '').trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Column(
+                        crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            record.isUrdu ? cols[c].labelUrdu : cols[c].labelEnglish,
+                            textDirection: dir,
+                            style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: context.policeTextHint),
+                          ),
+                          Text(
+                            v[formCellKey(f.id, r, c)] ?? '',
+                            textDirection: dir,
+                            style: record.isUrdu
+                                ? GoogleFonts.notoNastaliqUrdu(fontSize: 14, color: bodyColor, height: 1.6)
+                                : GoogleFonts.inter(fontSize: 13, color: bodyColor, height: 1.4),
+                          ),
+                        ],
+                      ),
+                    ),
+              ],
+            ),
+          ),
+        );
+      }
+      return out;
+    }
+
+    final val = v[f.id] ?? '';
+    if (val.trim().isEmpty) return [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Text(
+              f.labelForLanguage(record.isUrdu),
+              textDirection: dir,
+              style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: context.policeTextHint),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              val,
+              textDirection: dir,
+              style: record.isUrdu
+                  ? GoogleFonts.notoNastaliqUrdu(fontSize: 16, color: bodyColor, height: 1.9)
+                  : GoogleFonts.inter(fontSize: 15, color: bodyColor, height: 1.5),
+            ),
+          ],
+        ),
+      ),
+    ];
   }
 }
 

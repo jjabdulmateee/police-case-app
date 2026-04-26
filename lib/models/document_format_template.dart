@@ -3,9 +3,10 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../constants/document_format_ids.dart';
+import 'form_field_definition.dart';
 import 'scanned_field_data.dart';
 
-/// Hardcoded definitions for the two app-shipped PDF formats (IDs: [DocumentFormatIds.fir], [DocumentFormatIds.gir]).
+/// Hardcoded definitions for app-shipped PDF / built-in forms ([DocumentFormatIds]).
 /// These are merged with persisted usage stats in [DocumentFormatService] on each init.
 abstract final class PrebuiltDocumentFormats {
   PrebuiltDocumentFormats._();
@@ -21,6 +22,14 @@ abstract final class PrebuiltDocumentFormats {
   static const String investigationHeaderLine = 'INVESTIGATION REPORT';
   static const String investigationSubtitle = 'Office of the Investigation Officer — KPK';
   static const int investigationAccentArgb = 0xFF0A1929; // #0A1929
+
+  // --- Supplementary Report (رپورٹ ضمنی) — Police Form 25-53(1) ---
+  static const String supplementaryReportEnglish = 'Supplementary Report';
+  static const String supplementaryReportUrdu = 'رپورٹ ضمنی';
+  static const String supplementaryFormSubtitle = 'پولیس فارم ۲۵-۵۳(۱)';
+  static const String supplementaryDocumentSubheader = 'پولیس فارم ۲۵-۵۳(۱) — حصہ اول (بیرونی)';
+  static const String supplementaryDocumentSubheaderEnglish = 'Police Form 25-53(1) — Part 1 (External)';
+  static const int supplementaryAccentArgb = 0xFF1A5276;
 }
 
 /// User-defined or pre-built PDF layout.
@@ -49,6 +58,21 @@ class DocumentFormatTemplate {
   /// Fillable text regions on a scanned image (only [DocumentFormatKind.scan]).
   final List<ScannedFieldData> scannedFields;
 
+  /// Urdu name for list / UI (optional; e.g. Supplementary Report).
+  final String? nameUrdu;
+
+  /// Short subtitle, e.g. form number in Urdu.
+  final String? formSubtitle;
+
+  /// Second line under the main Urdu title on the paper form (optional).
+  final String? formDocumentSubheaderUrdu;
+
+  /// Second line under the English title (optional; e.g. Police Form part line).
+  final String? formDocumentSubheaderEnglish;
+
+  /// When non-empty, selecting this format opens [BuiltinFormScreen] instead of free-text home.
+  final List<FormFieldDefinition> builtinFormFields;
+
   const DocumentFormatTemplate({
     required this.id,
     required this.name,
@@ -63,10 +87,18 @@ class DocumentFormatTemplate {
     this.accentColorArgb = 0xFF3399FF,
     this.showCaseBadge = true,
     this.scannedFields = const [],
+    this.nameUrdu,
+    this.formSubtitle,
+    this.formDocumentSubheaderUrdu,
+    this.formDocumentSubheaderEnglish,
+    this.builtinFormFields = const [],
   });
 
   bool get isScan => kind == DocumentFormatKind.scan;
   bool get isCustom => kind == DocumentFormatKind.custom;
+
+  /// True for system “paper” forms (e.g. Supplementary Report) with [builtinFormFields].
+  bool get hasBuiltinFormFields => builtinFormFields.isNotEmpty;
 
   File? imageFile(String appDocumentsPath) {
     if (imageRelativePath == null) return null;
@@ -77,6 +109,7 @@ class DocumentFormatTemplate {
     int? usageCount,
     DateTime? lastUsedAt,
     List<ScannedFieldData>? scannedFields,
+    List<FormFieldDefinition>? builtinFormFields,
   }) {
     return DocumentFormatTemplate(
       id: id,
@@ -92,6 +125,11 @@ class DocumentFormatTemplate {
       accentColorArgb: accentColorArgb,
       showCaseBadge: showCaseBadge,
       scannedFields: scannedFields ?? this.scannedFields,
+      nameUrdu: nameUrdu,
+      formSubtitle: formSubtitle,
+      formDocumentSubheaderUrdu: formDocumentSubheaderUrdu,
+      formDocumentSubheaderEnglish: formDocumentSubheaderEnglish,
+      builtinFormFields: builtinFormFields ?? this.builtinFormFields,
     );
   }
 
@@ -108,6 +146,7 @@ class DocumentFormatTemplate {
       accentColorArgb: PrebuiltDocumentFormats.firAccentArgb,
       showCaseBadge: true,
       scannedFields: const [],
+      builtinFormFields: const [],
     );
   }
 
@@ -124,6 +163,28 @@ class DocumentFormatTemplate {
       accentColorArgb: PrebuiltDocumentFormats.investigationAccentArgb,
       showCaseBadge: true,
       scannedFields: const [],
+      builtinFormFields: const [],
+    );
+  }
+
+  /// Supplementary Report (رپورٹ ضمنی) — Police Form 25-53(1). Cannot be deleted.
+  static DocumentFormatTemplate systemSupplementaryReport() {
+    return DocumentFormatTemplate(
+      id: DocumentFormatIds.supplementaryZamni,
+      name: PrebuiltDocumentFormats.supplementaryReportEnglish,
+      kind: DocumentFormatKind.custom,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      isSystem: true,
+      titleLine1: PrebuiltDocumentFormats.supplementaryReportEnglish,
+      titleLine2: PrebuiltDocumentFormats.supplementaryFormSubtitle,
+      accentColorArgb: PrebuiltDocumentFormats.supplementaryAccentArgb,
+      showCaseBadge: true,
+      scannedFields: const [],
+      nameUrdu: PrebuiltDocumentFormats.supplementaryReportUrdu,
+      formSubtitle: PrebuiltDocumentFormats.supplementaryFormSubtitle,
+      formDocumentSubheaderUrdu: PrebuiltDocumentFormats.supplementaryDocumentSubheader,
+      formDocumentSubheaderEnglish: PrebuiltDocumentFormats.supplementaryDocumentSubheaderEnglish,
+      builtinFormFields: supplementaryReportZamniFields(),
     );
   }
 
@@ -146,6 +207,11 @@ class DocumentFormatTemplate {
       accentColorArgb: canonical.accentColorArgb,
       showCaseBadge: canonical.showCaseBadge,
       scannedFields: const [],
+      nameUrdu: canonical.nameUrdu,
+      formSubtitle: canonical.formSubtitle,
+      formDocumentSubheaderUrdu: canonical.formDocumentSubheaderUrdu,
+      formDocumentSubheaderEnglish: canonical.formDocumentSubheaderEnglish,
+      builtinFormFields: List<FormFieldDefinition>.from(canonical.builtinFormFields),
     );
   }
 
@@ -163,6 +229,11 @@ class DocumentFormatTemplate {
         'accentColorArgb': accentColorArgb,
         'showCaseBadge': showCaseBadge,
         'scannedFields': scannedFields.map((e) => e.toJson()).toList(),
+        'nameUrdu': nameUrdu,
+        'formSubtitle': formSubtitle,
+        'formDocumentSubheaderUrdu': formDocumentSubheaderUrdu,
+        'formDocumentSubheaderEnglish': formDocumentSubheaderEnglish,
+        'builtinFormFields': builtinFormFields.map((e) => e.toJson()).toList(),
       };
 
   static DocumentFormatTemplate fromJson(Map<String, dynamic> j) {
@@ -184,6 +255,15 @@ class DocumentFormatTemplate {
           )
           .toList();
     }
+    List<FormFieldDefinition> builtin = const [];
+    final rawB = j['builtinFormFields'] as List<dynamic>?;
+    if (rawB != null && rawB.isNotEmpty) {
+      builtin = rawB
+          .map(
+            (e) => FormFieldDefinition.fromJson(Map<String, dynamic>.from(e as Map)),
+          )
+          .toList();
+    }
     return DocumentFormatTemplate(
       id: j['id'] as String,
       name: j['name'] as String,
@@ -198,6 +278,11 @@ class DocumentFormatTemplate {
       accentColorArgb: (j['accentColorArgb'] as num?)?.toInt() ?? 0xFF3399FF,
       showCaseBadge: j['showCaseBadge'] as bool? ?? true,
       scannedFields: fields,
+      nameUrdu: j['nameUrdu'] as String?,
+      formSubtitle: j['formSubtitle'] as String?,
+      formDocumentSubheaderUrdu: j['formDocumentSubheaderUrdu'] as String?,
+      formDocumentSubheaderEnglish: j['formDocumentSubheaderEnglish'] as String?,
+      builtinFormFields: builtin,
     );
   }
 }

@@ -114,6 +114,14 @@ class DocumentFormatService extends ChangeNotifier {
     } else {
       _list[iInv] = DocumentFormatTemplate.mergeSystemWithPersisted(cInv, _list[iInv]);
     }
+
+    final iZ = _list.indexWhere((e) => e.id == DocumentFormatIds.supplementaryZamni);
+    final cZ = DocumentFormatTemplate.systemSupplementaryReport();
+    if (iZ < 0) {
+      _list.add(cZ);
+    } else {
+      _list[iZ] = DocumentFormatTemplate.mergeSystemWithPersisted(cZ, _list[iZ]);
+    }
   }
 
   void _pruneMissingScans() {
@@ -220,7 +228,9 @@ class DocumentFormatService extends ChangeNotifier {
   /// Replaces the fillable field definitions for a user scan format (not system).
   Future<void> setScannedFieldDefinitions(String id, List<ScannedFieldData> fields) async {
     await init();
-    if (id == DocumentFormatIds.fir || id == DocumentFormatIds.gir) return;
+    if (id == DocumentFormatIds.fir || id == DocumentFormatIds.gir || id == DocumentFormatIds.supplementaryZamni) {
+      return;
+    }
     final i = _list.indexWhere((e) => e.id == id);
     if (i < 0) return;
     final e = _list[i];
@@ -240,7 +250,9 @@ class DocumentFormatService extends ChangeNotifier {
 
   Future<void> deleteById(String id) async {
     await init();
-    if (id == DocumentFormatIds.fir || id == DocumentFormatIds.gir) return;
+    if (id == DocumentFormatIds.fir || id == DocumentFormatIds.gir || id == DocumentFormatIds.supplementaryZamni) {
+      return;
+    }
     DocumentFormatTemplate? t;
     for (final e in _list) {
       if (e.id == id) {

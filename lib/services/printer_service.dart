@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:blue_thermal_printer/blue_thermal_printer.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:pdf/pdf.dart' show PdfColor, PdfPageFormat;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -20,42 +20,46 @@ const _kLastBtAddress = 'printer_last_bt_address';
 const _kLastUsbDeviceId = 'printer_last_usb_device_id';
 const _kLastUsbName = 'printer_last_usb_name';
 
+/// Wi‑Fi / default: [Printing.layoutPdf]. Direct: Bluetooth serial (Android) or USB when connected.
 class PrinterService extends ChangeNotifier {
   PrinterService._();
   static final PrinterService instance = PrinterService._();
   factory PrinterService() => instance;
 
-  final BlueThermalPrinter _bt = BlueThermalPrinter.instance;
+  final _fbs = FlutterBluetoothSerial.instance;
+
   uio.UsbPort? _usbPort;
   uio.UsbDevice? _usbDevice;
-  String? _lastBtName;
-  String? _lastBtAddress;
+  BluetoothConnection? _btConnection;
+  StreamSubscription<Uint8List>? _btInputSub;
+
   bool _scanning = false;
   List<BluetoothDevice> _btDevices = [];
+  String? _lastBtName;
+  String? _lastBtAddress;
   String? _connectedDeviceName;
   PrinterConnectionType _connectionType = PrinterConnectionType.none;
   StreamSubscription<dynamic>? _usbSub;
   String? _lastUsbLabel;
-  bool? _isBtConnectedCache;
 
-  /// True when a direct (BT/USB) print session can be attempted.
+  bool get _isBtLinkOk =>
+      _btConnection != null && (_btConnection!.isConnected) && _connectionType == PrinterConnectionType.bluetooth;
+
+  /// True when USB port is open or an active Bluetooth serial link exists.
   bool get isDirectPrintReady {
     if (kIsWeb) return false;
     if (Platform.isAndroid) {
       if (_connectionType == PrinterConnectionType.bluetooth) {
-        return _isBtConnected;
+        return _isBtLinkOk;
       }
       if (_connectionType == PrinterConnectionType.usb) {
         return _usbPort != null;
       }
     }
-    if (!kIsWeb && Platform.isIOS && _connectionType == PrinterConnectionType.bluetooth) {
-      return _isBtConnected;
-    }
     return false;
   }
 
-  bool get _isBtConnected => _isBtConnectedCache == true;
+  bool get _isBtConnected => _isBtLinkOk;
 
   bool get isConnected {
     if (_connectionType == PrinterConnectionType.bluetooth) {
@@ -75,6 +79,7 @@ class PrinterService extends ChangeNotifier {
   uio.UsbDevice? get usbDevice => _usbDevice;
 
   bool get isAndroidUsbSupported => !kIsWeb && Platform.isAndroid;
+  static bool get _isAndroidSerialBt => !kIsWeb && Platform.isAndroid;
 
   String statusLine(LanguageService lang) {
     if (isDirectPrintReady && _connectedDeviceName != null) {
@@ -82,6 +87,9 @@ class PrinterService extends ChangeNotifier {
     }
     if (_lastBtName != null && _lastBtName!.isNotEmpty) {
       return '${lang.printerStatusLast} $_lastBtName';
+    }
+    if (_lastUsbLabel != null && _lastUsbLabel!.isNotEmpty) {
+      return '${lang.printerStatusLast} $_lastUsbLabel';
     }
     return lang.printerStatusNone;
   }
@@ -91,42 +99,25 @@ class PrinterService extends ChangeNotifier {
     _lastBtName = p.getString(_kLastBtName);
     _lastBtAddress = p.getString(_kLastBtAddress);
     _lastUsbLabel = p.getString(_kLastUsbName);
-    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-      _bt.onStateChanged().listen((s) {
-        if (s == BlueThermalPrinter.CONNECTED) {
-          _isBtConnectedCache = true;
-          _connectionType = PrinterConnectionType.bluetooth;
-        } else if (s == BlueThermalPrinter.DISCONNECTED ||
-            s == BlueThermalPrinter.DISCONNECT_REQUESTED ||
-            s == BlueThermalPrinter.STATE_OFF) {
-          _isBtConnectedCache = false;
-          if (_connectionType == PrinterConnectionType.bluetooth) {
-            _connectionType = PrinterConnectionType.none;
-            _connectedDeviceName = null;
-          }
-        }
-        notifyListeners();
-      });
-    }
     if (isAndroidUsbSupported) {
       _usbSub = uio.UsbSerial.usbEventStream?.listen((_) {
         unawaited(_probeUsbList());
       });
     }
-    await _refreshBluetoothConnectedFlag();
     if (isAndroidUsbSupported) {
       unawaited(_probeUsbList());
     }
-    unawaited(_tryReconnectLastBluetooth());
+    if (_isAndroidSerialBt) {
+      unawaited(_tryReconnectLastBluetooth());
+    }
   }
 
   Future<void> _tryReconnectLastBluetooth() async {
-    if (kIsWeb) return;
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (!_isAndroidSerialBt) return;
     if (_lastBtAddress == null || _lastBtAddress!.isEmpty) return;
     if (isConnected && _connectionType == PrinterConnectionType.bluetooth) return;
     try {
-      final list = await _bt.getBondedDevices();
+      final list = await _fbs.getBondedDevices();
       for (final d in list) {
         if (d.address == _lastBtAddress) {
           await connectBluetooth(d);
@@ -134,20 +125,6 @@ class PrinterService extends ChangeNotifier {
         }
       }
     } catch (_) {}
-  }
-
-  Future<void> _refreshBluetoothConnectedFlag() async {
-    if (kIsWeb) return;
-    if (!Platform.isAndroid && !Platform.isIOS) return;
-    try {
-      final c = await _bt.isConnected;
-      _isBtConnectedCache = c == true;
-      if (c == true && _connectionType == PrinterConnectionType.none) {
-        _connectionType = PrinterConnectionType.bluetooth;
-      }
-    } catch (_) {
-      _isBtConnectedCache = false;
-    }
   }
 
   Future<void> _probeUsbList() async {
@@ -182,13 +159,11 @@ class PrinterService extends ChangeNotifier {
   }
 
   Future<void> scanForBluetoothDevices() async {
-    if (kIsWeb) return;
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (!_isAndroidSerialBt) return;
     _scanning = true;
     notifyListeners();
     try {
-      await _refreshBluetoothConnectedFlag();
-      _btDevices = await _bt.getBondedDevices();
+      _btDevices = await _fbs.getBondedDevices();
     } catch (_) {
       _btDevices = [];
     }
@@ -196,29 +171,53 @@ class PrinterService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _closeBluetooth() async {
+    await _btInputSub?.cancel();
+    _btInputSub = null;
+    if (_btConnection != null) {
+      try {
+        await _btConnection!.close();
+      } catch (_) {}
+      _btConnection = null;
+    }
+    if (_connectionType == PrinterConnectionType.bluetooth) {
+      _connectionType = PrinterConnectionType.none;
+      _connectedDeviceName = null;
+    }
+  }
+
   Future<bool> connectBluetooth(BluetoothDevice device) async {
-    if (kIsWeb) return false;
-    if (!Platform.isAndroid && !Platform.isIOS) return false;
+    if (!_isAndroidSerialBt) return false;
     try {
-      await _bt.disconnect();
-      final r = await _bt.connect(device);
-      if (r == true || r == null) {
-        _connectionType = PrinterConnectionType.bluetooth;
-        _connectedDeviceName = device.name?.isNotEmpty == true ? device.name! : (device.address ?? 'Bluetooth');
-        _isBtConnectedCache = true;
-        _lastBtName = _connectedDeviceName;
-        _lastBtAddress = device.address;
-        final p = await SharedPreferences.getInstance();
-        if (_lastBtName != null) await p.setString(_kLastBtName, _lastBtName!);
-        if (_lastBtAddress != null) await p.setString(_kLastBtAddress, _lastBtAddress!);
-        if (_usbPort != null) {
-          unawaited(_closeUsb());
-        }
-        notifyListeners();
-        return true;
-      }
-    } catch (_) {}
-    return false;
+      await _closeUsb();
+      await _closeBluetooth();
+      final conn = await BluetoothConnection.toAddress(device.address);
+      _btInputSub = conn.input?.listen(
+        (_) {},
+        onError: (_) {},
+        onDone: () {
+          if (_connectionType == PrinterConnectionType.bluetooth) {
+            unawaited(_closeBluetooth());
+            notifyListeners();
+          }
+        },
+        cancelOnError: false,
+      );
+      _btConnection = conn;
+      _connectionType = PrinterConnectionType.bluetooth;
+      _connectedDeviceName = device.name?.isNotEmpty == true ? device.name! : device.address;
+      _lastBtName = _connectedDeviceName;
+      _lastBtAddress = device.address;
+      final p = await SharedPreferences.getInstance();
+      if (_lastBtName != null) await p.setString(_kLastBtName, _lastBtName!);
+      if (_lastBtAddress != null) await p.setString(_kLastBtAddress, _lastBtAddress!);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      await _closeBluetooth();
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> _closeUsb() async {
@@ -235,7 +234,8 @@ class PrinterService extends ChangeNotifier {
   Future<bool> connectUSB() async {
     if (!isAndroidUsbSupported) return false;
     try {
-      unawaited(_closeUsb());
+      await _closeBluetooth();
+      await _closeUsb();
       final list = await uio.UsbSerial.listDevices();
       if (list.isEmpty) return false;
       uio.UsbDevice? d = _usbDevice;
@@ -259,10 +259,6 @@ class PrinterService extends ChangeNotifier {
         await p.setInt(_kLastUsbDeviceId, d.deviceId!);
       }
       if (_lastUsbLabel != null) await p.setString(_kLastUsbName, _lastUsbLabel!);
-      try {
-        await _bt.disconnect();
-        _isBtConnectedCache = false;
-      } catch (_) {}
       notifyListeners();
       return true;
     } catch (_) {
@@ -272,24 +268,30 @@ class PrinterService extends ChangeNotifier {
 
   Future<void> disconnect() async {
     if (_connectionType == PrinterConnectionType.bluetooth) {
-      try {
-        await _bt.disconnect();
-      } catch (_) {}
-      _isBtConnectedCache = false;
-      _connectedDeviceName = null;
-      _connectionType = PrinterConnectionType.none;
+      await _closeBluetooth();
     } else {
-      unawaited(_closeUsb());
+      await _closeUsb();
     }
     notifyListeners();
+  }
+
+  static const _btChunk = 512;
+
+  Future<void> _writeAllToBluetooth(Uint8List pdfBytes) async {
+    final out = _btConnection!.output;
+    for (var i = 0; i < pdfBytes.length; i += _btChunk) {
+      final end = (i + _btChunk < pdfBytes.length) ? i + _btChunk : pdfBytes.length;
+      out.add(pdfBytes.sublist(i, end));
+    }
+    await out.allSent;
   }
 
   Future<bool> printPdf(Uint8List pdfBytes) async {
     if (pdfBytes.isEmpty) return false;
     if (_connectionType == PrinterConnectionType.bluetooth && _isBtConnected) {
       try {
-        final r = await _bt.writeBytes(pdfBytes);
-        return r == true || r == null;
+        await _writeAllToBluetooth(pdfBytes);
+        return true;
       } catch (_) {
         return false;
       }
@@ -341,12 +343,13 @@ class PrinterService extends ChangeNotifier {
 
   @override
   void dispose() {
+    unawaited(_closeBluetooth());
     _usbSub?.cancel();
     super.dispose();
   }
 }
 
-/// Direct print when [PrinterService.isDirectPrintReady], else (or on failure) system dialog.
+/// Direct print (Bluetooth/USB) when [PrinterService.isDirectPrintReady], else [Printing.layoutPdf].
 Future<void> printPdfWithDirectFallback(
   BuildContext? context, {
   required LanguageService? lang,

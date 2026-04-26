@@ -240,14 +240,13 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                                             color: context.policeTextPrimary,
                                           ),
                                         ),
-                                        if (d.address != null)
-                                          Text(
-                                            d.address!,
-                                            style: GoogleFonts.inter(
-                                              fontSize: 12,
-                                              color: context.policeTextHint,
-                                            ),
+                                        Text(
+                                          d.address,
+                                          style: GoogleFonts.inter(
+                                            fontSize: 12,
+                                            color: context.policeTextHint,
                                           ),
+                                        ),
                                       ],
                                     ),
                                   ),

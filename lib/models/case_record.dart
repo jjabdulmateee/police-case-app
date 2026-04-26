@@ -25,6 +25,12 @@ class CaseRecord extends HiveObject {
   /// Local media attachment IDs; Hive field 12. See [CaseMedia] / [CaseMediaService].
   List<String> mediaIds;
 
+  /// Built-in form field id → value; Hive field 13.
+  Map<String, String> formFieldValues;
+
+  /// Set when the case was created with a built-in paper form; matches [caseFormatId] for those cases. Hive field 14.
+  String formId;
+
   CaseRecord({
     required this.heading,
     required this.details,
@@ -39,8 +45,11 @@ class CaseRecord extends HiveObject {
     this.caseFormatName = '',
     Map<String, String>? scannedFieldValues,
     List<String>? mediaIds,
+    Map<String, String>? formFieldValues,
+    this.formId = '',
   })  : scannedFieldValues = Map<String, String>.from(scannedFieldValues ?? const {}),
-        mediaIds = List<String>.from(mediaIds ?? const []);
+        mediaIds = List<String>.from(mediaIds ?? const []),
+        formFieldValues = Map<String, String>.from(formFieldValues ?? const {});
 
   /// Same as [caseFormatId] (spec alias).
   String get formatId => caseFormatId;
@@ -108,13 +117,15 @@ class CaseRecordAdapter extends TypeAdapter<CaseRecord> {
       caseFormatName: numOfFields > 10 ? (fields[10] as String?) ?? '' : '',
       scannedFieldValues: CaseRecord._decodeScannedMapFromHive(numOfFields > 11 ? fields[11] : null),
       mediaIds: numOfFields > 12 ? CaseRecord._decodeMediaIdsFromHive(fields[12]) : const <String>[],
+      formFieldValues: CaseRecord._decodeScannedMapFromHive(numOfFields > 13 ? fields[13] : null),
+      formId: numOfFields > 14 ? (fields[14] as String?) ?? '' : '',
     );
   }
 
   @override
   void write(BinaryWriter writer, CaseRecord obj) {
     writer
-      ..writeByte(13)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.heading)
       ..writeByte(1)
@@ -140,7 +151,11 @@ class CaseRecordAdapter extends TypeAdapter<CaseRecord> {
       ..writeByte(11)
       ..write(jsonEncode(obj.scannedFieldValues))
       ..writeByte(12)
-      ..write(jsonEncode(obj.mediaIds));
+      ..write(jsonEncode(obj.mediaIds))
+      ..writeByte(13)
+      ..write(jsonEncode(obj.formFieldValues))
+      ..writeByte(14)
+      ..write(obj.formId);
   }
 
   @override

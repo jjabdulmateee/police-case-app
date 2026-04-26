@@ -45,12 +45,14 @@ class _CasesScreenState extends State<CasesScreen> {
       final preview = c.preview.toLowerCase();
       final ref = c.caseReferenceNo.toLowerCase();
       final fmt = c.caseFormatName.toLowerCase();
+      final formBlob = c.formFieldValues.values.map((e) => e.toLowerCase()).join(' ');
       return h.contains(q) ||
           d.contains(q) ||
           preview.contains(q) ||
           ref.contains(q) ||
           (fmt.isNotEmpty && fmt.contains(q)) ||
-          c.caseFormatId.toLowerCase().contains(q);
+          c.caseFormatId.toLowerCase().contains(q) ||
+          (formBlob.isNotEmpty && formBlob.contains(q));
     }).toList();
   }
 

@@ -37,8 +37,6 @@ dependencies:
   hive_flutter: ^1.1.0
   pdf: ^3.11.1
   printing: ^5.12.0
-  # 1.1.x is pre–null-safety; SDK 3.9 requires 1.2.x+.
-  blue_thermal_printer: ^1.2.3
   usb_serial: 0.4.0
   shared_preferences: ^2.3.3
   flutter_secure_storage: ^9.0.0
@@ -51,6 +49,7 @@ dependencies:
   mime: ^1.0.0
   open_file: ^3.5.0
   share_plus: ^7.0.0
+  flutter_bluetooth_serial: ^0.4.0
 
 dev_dependencies:
   flutter_test:

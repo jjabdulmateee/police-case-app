@@ -3,4 +3,5 @@ class DocumentFormatIds {
   DocumentFormatIds._();
   static const String fir = 'prebuilt_fir';
   static const String gir = 'prebuilt_gir';
+  static const String supplementaryZamni = 'prebuilt_report_zamni';
 }

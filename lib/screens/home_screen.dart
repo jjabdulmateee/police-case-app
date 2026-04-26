@@ -27,6 +27,7 @@ import '../services/document_format_service.dart';
 import '../services/home_draft_service.dart';
 import 'document_format_studio_screen.dart';
 import 'scanned_format_editor_screen.dart';
+import 'builtin_form_screen.dart';
 
 enum _ActiveField { reference, heading, paragraph }
 
@@ -389,6 +390,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final id = await showFormatPickerBottomSheet(context: context, lang: _lang);
     if (!mounted || id == null) return;
     _sessionScannedFieldValues.clear();
+    if (id.isNotEmpty) {
+      final fmt = DocumentFormatService().getById(id);
+      if (fmt != null && fmt.hasBuiltinFormFields) {
+        await Navigator.of(context).push<void>(
+          PageRouteBuilder<void>(
+            pageBuilder: (_, __, ___) => BuiltinFormScreen(format: fmt),
+            transitionDuration: const Duration(milliseconds: 380),
+            reverseTransitionDuration: const Duration(milliseconds: 300),
+            transitionsBuilder: (_, anim, __, child) {
+              return FadeTransition(
+                opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+                child: child,
+              );
+            },
+            opaque: true,
+            fullscreenDialog: true,
+          ),
+        );
+        return;
+      }
+    }
     setState(() => _sessionFormatId = id);
     if (id.isNotEmpty) {
       final fmt = DocumentFormatService().getById(id);
