@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'core/theme/app_theme.dart';
@@ -123,43 +124,113 @@ class _AppShellState extends State<AppShell> {
       const SettingsScreen(),
     ];
 
+    final accent = dark ? AppColors.accent : AppColors.filesBlue;
+
     return Scaffold(
       // IndexedStack keeps each tab’s state (e.g. home draft + format) when switching.
       body: IndexedStack(
         index: _currentIndex,
         children: screens,
       ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: navBg,
-          boxShadow: [
-            BoxShadow(
-              color: dark ? Colors.black.withValues(alpha: 0.45) : AppColors.shadowLight,
-              blurRadius: 20,
-              offset: const Offset(0, -4),
+      bottomNavigationBar: Material(
+        color: navBg,
+        elevation: 0,
+        child: SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: BoxDecoration(
+              color: navBg,
+              boxShadow: [
+                BoxShadow(
+                  color: dark ? Colors.black.withValues(alpha: 0.45) : AppColors.shadowLight,
+                  blurRadius: 16,
+                  offset: const Offset(0, -2),
+                ),
+              ],
             ),
-          ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _ShellNavItem(
+                  selected: _currentIndex == 0,
+                  selectedIcon: Icons.home_rounded,
+                  unselectedIcon: Icons.home_outlined,
+                  label: 'Home',
+                  accent: accent,
+                  muted: unselected,
+                  onTap: () => setState(() => _currentIndex = 0),
+                ),
+                _ShellNavItem(
+                  selected: _currentIndex == 1,
+                  selectedIcon: Icons.folder_rounded,
+                  unselectedIcon: Icons.folder_outlined,
+                  label: 'Files',
+                  accent: accent,
+                  muted: unselected,
+                  onTap: () => setState(() => _currentIndex = 1),
+                ),
+                _ShellNavItem(
+                  selected: _currentIndex == 2,
+                  selectedIcon: Icons.person_rounded,
+                  unselectedIcon: Icons.person_outline_rounded,
+                  label: 'Profile',
+                  accent: accent,
+                  muted: unselected,
+                  onTap: () => setState(() => _currentIndex = 2),
+                ),
+              ],
+            ),
+          ),
         ),
-        child: NavigationBar(
-          selectedIndex: _currentIndex,
-          onDestinationSelected: (i) => setState(() => _currentIndex = i),
-          animationDuration: const Duration(milliseconds: 400),
-          height: 72,
-          destinations: [
-            NavigationDestination(
-              icon: Icon(Icons.edit_document, size: 24, color: unselected),
-              selectedIcon: const Icon(Icons.edit_document, color: AppColors.accent, size: 26),
-              label: 'Document',
+      ),
+    );
+  }
+}
+
+class _ShellNavItem extends StatelessWidget {
+  final bool selected;
+  final IconData selectedIcon;
+  final IconData unselectedIcon;
+  final String label;
+  final Color accent;
+  final Color muted;
+  final VoidCallback onTap;
+
+  const _ShellNavItem({
+    required this.selected,
+    required this.selectedIcon,
+    required this.unselectedIcon,
+    required this.label,
+    required this.accent,
+    required this.muted,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? accent : muted;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              selected ? selectedIcon : unselectedIcon,
+              size: 26,
+              color: color,
             ),
-            NavigationDestination(
-              icon: Icon(Icons.folder_outlined, size: 24, color: unselected),
-              selectedIcon: const Icon(Icons.folder_rounded, color: AppColors.accent, size: 26),
-              label: 'Cases',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined, size: 24, color: unselected),
-              selectedIcon: const Icon(Icons.settings_rounded, color: AppColors.accent, size: 26),
-              label: 'Settings',
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ],
         ),

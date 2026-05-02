@@ -9,7 +9,7 @@ enum FormFieldType {
   /// Multi-line (same layout style with taller area).
   multiLine,
 
-  /// Grid with a header row and [tableRowCount] data rows; cell keys via [formCellKey].
+  /// Investigation-style table: notebook keys [tableNarrativeKey] / [tableSerialKey] / [tableDatetimeKey]; legacy per-row [formCellKey].
   table,
 }
 
@@ -113,8 +113,58 @@ class FormFieldDefinition {
   }
 }
 
-/// Cell storage key for table [tableId] at [row] / [col] (0-based).
+/// Cell storage key for table [tableId] at [row] / [col] (0-based); legacy [FormFieldType.table] rows.
 String formCellKey(String tableId, int row, int col) => '${tableId}_r${row}_c$col';
+
+/// Notebook layout: one ruled story column + two side note columns (replaces per-row [formCellKey] storage).
+String tableNarrativeKey(String tableId) => '${tableId}_narrative';
+String tableSerialKey(String tableId) => '${tableId}_serial';
+String tableDatetimeKey(String tableId) => '${tableId}_datetime';
+
+int _maxLegacyTableRowIndex(String tableId, Map<String, String> map) {
+  var maxR = -1;
+  final prefix = '${tableId}_r';
+  for (final k in map.keys) {
+    if (!k.startsWith(prefix)) continue;
+    final rest = k.substring(prefix.length);
+    final idx = rest.indexOf('_c');
+    if (idx <= 0) continue;
+    final r = int.tryParse(rest.substring(0, idx)) ?? -1;
+    if (r > maxR) maxR = r;
+  }
+  return maxR;
+}
+
+String _joinLegacyTableColumn(String tableId, int col, Map<String, String> map) {
+  final maxR = _maxLegacyTableRowIndex(tableId, map);
+  if (maxR < 0) return '';
+  final parts = <String>[];
+  for (var r = 0; r <= maxR; r++) {
+    final t = (map[formCellKey(tableId, r, col)] ?? '').trim();
+    if (t.isNotEmpty) parts.add(t);
+  }
+  return parts.join('\n\n');
+}
+
+/// Circumstances text: new key or merged old row keys for column 0.
+String resolveTableNarrative(String tableId, Map<String, String> map) {
+  final d = (map[tableNarrativeKey(tableId)] ?? '').trim();
+  if (d.isNotEmpty) return d;
+  return _joinLegacyTableColumn(tableId, 0, map);
+}
+
+/// Serial / datetime columns: new key or legacy merge.
+String resolveTableSerial(String tableId, Map<String, String> map) {
+  final d = (map[tableSerialKey(tableId)] ?? '').trim();
+  if (d.isNotEmpty) return d;
+  return _joinLegacyTableColumn(tableId, 1, map);
+}
+
+String resolveTableDatetime(String tableId, Map<String, String> map) {
+  final d = (map[tableDatetimeKey(tableId)] ?? '').trim();
+  if (d.isNotEmpty) return d;
+  return _joinLegacyTableColumn(tableId, 2, map);
+}
 
 /// Police Form 25-53(1) — Supplementary Report field layout.
 List<FormFieldDefinition> supplementaryReportZamniFields() {
@@ -198,13 +248,13 @@ List<FormFieldDefinition> supplementaryReportZamniFields() {
           flex: 3,
         ),
         FormTableColumnDef(
-          labelUrdu: 'رپورٹ کانمبرشار سلسلہ وار',
-          labelEnglish: 'Report Serial Number',
+          labelUrdu: 'سیریل نمبر',
+          labelEnglish: 'Serial no.',
           flex: 1,
         ),
         FormTableColumnDef(
-          labelUrdu: 'تاریخ معہ وقت جس پر کاروائی کی گئی',
-          labelEnglish: 'Date and Time of Action',
+          labelUrdu: 'تاریخ / وقت',
+          labelEnglish: 'Date & time',
           flex: 1,
         ),
       ],

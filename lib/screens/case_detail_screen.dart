@@ -495,6 +495,10 @@ class _BuiltinCaseFormValues extends StatelessWidget {
     final v = record.formFieldValues;
     if (f.type == FormFieldType.table) {
       final cols = f.tableColumns ?? [];
+      final n = resolveTableNarrative(f.id, v);
+      final s = resolveTableSerial(f.id, v);
+      final d = resolveTableDatetime(f.id, v);
+      final hasNotebook = n.isNotEmpty || s.isNotEmpty || d.isNotEmpty;
       final out = <Widget>[
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 6),
@@ -507,6 +511,46 @@ class _BuiltinCaseFormValues extends StatelessWidget {
           ),
         ),
       ];
+      if (hasNotebook) {
+        Widget block(String label, String text) {
+          if (text.trim().isEmpty) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: record.isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  textDirection: dir,
+                  style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: context.policeTextHint),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  text,
+                  textDirection: dir,
+                  style: record.isUrdu
+                      ? GoogleFonts.notoNastaliqUrdu(fontSize: 15, color: bodyColor, height: 1.65)
+                      : GoogleFonts.inter(fontSize: 14, color: bodyColor, height: 1.5),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (n.isNotEmpty) {
+          out.add(block(
+            cols.isNotEmpty ? (record.isUrdu ? cols[0].labelUrdu : cols[0].labelEnglish) : f.labelForLanguage(record.isUrdu),
+            n,
+          ));
+        }
+        if (s.isNotEmpty && cols.length > 1) {
+          out.add(block(record.isUrdu ? cols[1].labelUrdu : cols[1].labelEnglish, s));
+        }
+        if (d.isNotEmpty && cols.length > 2) {
+          out.add(block(record.isUrdu ? cols[2].labelUrdu : cols[2].labelEnglish, d));
+        }
+        return out;
+      }
       for (var r = 0; r < f.tableRowCount; r++) {
         var rowEmpty = true;
         for (var c = 0; c < cols.length; c++) {

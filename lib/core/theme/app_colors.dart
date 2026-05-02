@@ -11,8 +11,12 @@ class AppColors {
   static const Color accentLight = Color(0xFF66B2FF);
   static const Color accentSoft = Color(0xFF1A3A5C);
 
-  static const Color surface = Color(0xFFF8FAFD);
+  static const Color surface = Color(0xFFF5F5F5);
   static const Color surfaceCard = Colors.white;
+  /// Pill search / subtle fills (file-manager style light UI).
+  static const Color surfaceMuted = Color(0xFFEEEEEE);
+  static const Color filesBlue = Color(0xFF1A73E8);
+  static const Color filesBlueSoft = Color(0xFFE8F1FE);
   static const Color surfaceDark = Color(0xFF0D2137);
 
   static const Color textPrimary = Color(0xFF0A1929);

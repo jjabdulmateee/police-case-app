@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -6,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:printing/printing.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/theme_context.dart';
+import '../main.dart';
 import '../models/case_record.dart';
 import '../models/case_reference.dart';
 import '../services/document_format_service.dart';
@@ -13,6 +15,8 @@ import '../services/language_service.dart';
 import '../services/pdf_service.dart';
 import '../services/printer_service.dart';
 import 'case_detail_screen.dart';
+
+enum _FolderScope { all, thisWeek }
 
 class CasesScreen extends StatefulWidget {
   const CasesScreen({super.key});
@@ -23,6 +27,10 @@ class CasesScreen extends StatefulWidget {
 
 class _CasesScreenState extends State<CasesScreen> {
   final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
+
+  _FolderScope _folderScope = _FolderScope.all;
+  bool _newestFirst = true;
 
   @override
   void initState() {
@@ -33,6 +41,7 @@ class _CasesScreenState extends State<CasesScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -56,14 +65,54 @@ class _CasesScreenState extends State<CasesScreen> {
     }).toList();
   }
 
+  List<CaseRecord> _applyFolderScope(List<CaseRecord> list) {
+    if (_folderScope == _FolderScope.all) return list;
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - DateTime.monday));
+    return list.where((c) => !c.savedAt.isBefore(start)).toList();
+  }
+
+  List<CaseRecord> _sortDisplay(List<CaseRecord> list) {
+    final copy = List<CaseRecord>.from(list);
+    copy.sort((a, b) => _newestFirst ? b.savedAt.compareTo(a.savedAt) : a.savedAt.compareTo(b.savedAt));
+    return copy;
+  }
+
   int _caseNumber(List<CaseRecord> sortedDesc, CaseRecord record) {
     final i = sortedDesc.indexWhere((r) => r.key == record.key);
     if (i < 0) return sortedDesc.length;
     return sortedDesc.length - i;
   }
 
+  bool _isThisWeek(DateTime d) {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - DateTime.monday));
+    return !d.isBefore(start);
+  }
+
+  int _countThisWeek(List<CaseRecord> all) => all.where((c) => _isThisWeek(c.savedAt)).length;
+
+  Color _accentForCase(CaseRecord r) {
+    if (r.caseFormatId.isEmpty) return AppColors.filesBlue;
+    var hash = 0;
+    for (final u in r.caseFormatId.codeUnits) {
+      hash = (hash * 31 + u) & 0x7fffffff;
+    }
+    const palette = [
+      Color(0xFF1A73E8),
+      Color(0xFF00897B),
+      Color(0xFF7E57C2),
+      Color(0xFFFB8C00),
+      Color(0xFFE53935),
+    ];
+    return palette[hash % palette.length];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final blue = context.isPoliceDark ? AppColors.accent : AppColors.filesBlue;
+    final blueSoft = context.isPoliceDark ? AppColors.accent.withValues(alpha: 0.14) : AppColors.filesBlueSoft;
+
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
@@ -71,21 +120,88 @@ class _CasesScreenState extends State<CasesScreen> {
           valueListenable: Hive.box<CaseRecord>('cases').listenable(),
           builder: (context, box, _) {
             final allSorted = box.values.toList()..sort((a, b) => b.savedAt.compareTo(a.savedAt));
-            final filtered = _filterCases(allSorted);
             final searchEmpty = _searchController.text.trim().isEmpty;
-            final displayList = searchEmpty ? allSorted : filtered;
-            final headerCount = searchEmpty ? allSorted.length : filtered.length;
+            final afterSearch = searchEmpty ? allSorted : _filterCases(allSorted);
+            final scoped = _applyFolderScope(afterSearch);
+            final displayList = _sortDisplay(scoped);
 
             return CustomScrollView(
               physics: const BouncingScrollPhysics(),
               slivers: [
-                SliverToBoxAdapter(child: _Header(count: headerCount, total: allSorted.length, searching: !searchEmpty)),
-                SliverToBoxAdapter(child: _CasesSearchBar(controller: _searchController)),
+                SliverToBoxAdapter(
+                  child: _TopBar(
+                    blue: blue,
+                    onMenuSelected: (action) {
+                      setState(() {
+                        if (action == _TopMenu.newest) _newestFirst = true;
+                        if (action == _TopMenu.oldest) _newestFirst = false;
+                        if (action == _TopMenu.reset) {
+                          _folderScope = _FolderScope.all;
+                          _searchController.clear();
+                          _newestFirst = true;
+                        }
+                      });
+                    },
+                  ),
+                ),
+                SliverToBoxAdapter(child: _PillSearchBar(controller: _searchController, focusNode: _searchFocus)),
                 if (allSorted.isEmpty)
                   const SliverFillRemaining(child: _EmptyStateNoCases())
-                else if (filtered.isEmpty)
-                  const SliverFillRemaining(child: _EmptyStateNoSearchResults())
-                else
+                else if (displayList.isEmpty)
+                  SliverFillRemaining(
+                    child: searchEmpty ? _EmptyStateScopeEmpty(blue: blue) : const _EmptyStateNoSearchResults(),
+                  )
+                else ...[
+                  SliverToBoxAdapter(
+                    child: _SectionHeader(
+                      title: 'My folders',
+                      trailing: Text(
+                        'See all >',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: context.policeTextHint,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: _QuickFolderGrid(
+                      blue: blue,
+                      blueSoft: blueSoft,
+                      dark: context.isPoliceDark,
+                      total: allSorted.length,
+                      weekCount: _countThisWeek(allSorted),
+                      scope: _folderScope,
+                      onNewCase: () => AppShell.switchToTab(context, 0),
+                      onPickAll: () => setState(() => _folderScope = _FolderScope.all),
+                      onPickWeek: () => setState(() => _folderScope = _FolderScope.thisWeek),
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                      child: _SecondaryActionsRow(
+                        blue: blue,
+                        blueSoft: blueSoft,
+                        onNew: () => AppShell.switchToTab(context, 0),
+                        onSearchTap: () => _searchFocus.requestFocus(),
+                      ),
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: _SectionHeader(
+                      title: 'Recent cases',
+                      trailing: Text(
+                        '${displayList.length} items',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: context.policeTextHint,
+                        ),
+                      ),
+                    ),
+                  ),
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
                     sliver: SliverList(
@@ -93,12 +209,18 @@ class _CasesScreenState extends State<CasesScreen> {
                         (context, index) {
                           final record = displayList[index];
                           final caseNumber = _caseNumber(allSorted, record);
-                          return _CaseCard(record: record, caseNumber: caseNumber, box: box);
+                          return _CaseRowCard(
+                            record: record,
+                            caseNumber: caseNumber,
+                            box: box,
+                            accent: _accentForCase(record),
+                          );
                         },
                         childCount: displayList.length,
                       ),
                     ),
                   ),
+                ],
                 const SliverToBoxAdapter(child: SizedBox(height: 32)),
               ],
             );
@@ -109,64 +231,84 @@ class _CasesScreenState extends State<CasesScreen> {
   }
 }
 
-class _Header extends StatelessWidget {
-  final int count;
-  final int total;
-  final bool searching;
-  const _Header({required this.count, required this.total, required this.searching});
+enum _TopMenu { newest, oldest, reset }
+
+class _TopBar extends StatelessWidget {
+  final Color blue;
+  final void Function(_TopMenu) onMenuSelected;
+
+  const _TopBar({required this.blue, required this.onMenuSelected});
 
   @override
   Widget build(BuildContext context) {
-    final sub = searching && count != total
-        ? '$count match${count == 1 ? '' : 'es'} · $total total'
-        : '$count documented case${count == 1 ? '' : 's'}';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(
-          'Cases',
-          style: GoogleFonts.inter(
-            fontSize: 32,
-            fontWeight: FontWeight.w800,
-            color: context.policeTextPrimary,
-            letterSpacing: -0.8,
+      padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Text(
+              'Cases',
+              style: GoogleFonts.inter(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: context.policeTextPrimary,
+                letterSpacing: -0.6,
+              ),
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          sub,
-          style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400, color: context.policeTextSecondary),
-        ),
-      ]),
+          PopupMenuButton<_TopMenu>(
+            tooltip: 'More',
+            icon: Icon(Icons.more_vert_rounded, color: context.policeTextPrimary),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            color: context.policeCard,
+            elevation: 8,
+            onSelected: onMenuSelected,
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: _TopMenu.newest,
+                child: Text('Sort · Newest first', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+              ),
+              PopupMenuItem(
+                value: _TopMenu.oldest,
+                child: Text('Sort · Oldest first', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+              ),
+              PopupMenuItem(
+                value: _TopMenu.reset,
+                child: Text('Reset filters', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _CasesSearchBar extends StatelessWidget {
+class _PillSearchBar extends StatelessWidget {
   final TextEditingController controller;
-  const _CasesSearchBar({required this.controller});
+  final FocusNode focusNode;
+
+  const _PillSearchBar({required this.controller, required this.focusNode});
 
   @override
   Widget build(BuildContext context) {
-    final dark = context.isPoliceDark;
-    final border = dark ? AppColors.darkBorder.withValues(alpha: 0.9) : AppColors.primary.withValues(alpha: 0.12);
-    final fill = dark ? AppColors.darkSurface.withValues(alpha: 0.95) : AppColors.primary.withValues(alpha: 0.04);
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: ValueListenableBuilder<TextEditingValue>(
         valueListenable: controller,
         builder: (context, value, _) {
           final hasText = value.text.isNotEmpty;
           return TextField(
             controller: controller,
+            focusNode: focusNode,
             style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w500, color: context.policeTextPrimary),
             cursorColor: AppColors.accent,
             decoration: InputDecoration(
               isDense: true,
               filled: true,
-              fillColor: fill,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              fillColor: context.policeSearchFill,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               prefixIcon: Icon(Icons.search_rounded, color: context.policeTextHint, size: 22),
               suffixIcon: hasText
                   ? IconButton(
@@ -175,13 +317,13 @@ class _CasesSearchBar extends StatelessWidget {
                       tooltip: 'Clear',
                     )
                   : null,
-              hintText: 'Search cases…',
+              hintText: 'Search',
               hintStyle: GoogleFonts.inter(fontSize: 15, color: context.policeTextHint),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: border)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: border)),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(999), borderSide: BorderSide.none),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(999), borderSide: BorderSide.none),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: AppColors.accent, width: 1.5),
+                borderRadius: BorderRadius.circular(999),
+                borderSide: BorderSide(color: AppColors.accent.withValues(alpha: 0.35), width: 1.25),
               ),
             ),
           );
@@ -191,8 +333,334 @@ class _CasesSearchBar extends StatelessWidget {
   }
 }
 
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final Widget trailing;
+
+  const _SectionHeader({required this.title, required this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: context.policeTextPrimary,
+            ),
+          ),
+          const Spacer(),
+          trailing,
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickFolderGrid extends StatelessWidget {
+  final Color blue;
+  final Color blueSoft;
+  final bool dark;
+  final int total;
+  final int weekCount;
+  final _FolderScope scope;
+  final VoidCallback onNewCase;
+  final VoidCallback onPickAll;
+  final VoidCallback onPickWeek;
+
+  const _QuickFolderGrid({
+    required this.blue,
+    required this.blueSoft,
+    required this.dark,
+    required this.total,
+    required this.weekCount,
+    required this.scope,
+    required this.onNewCase,
+    required this.onPickAll,
+    required this.onPickWeek,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final labelColor = context.policeTextPrimary;
+    final subColor = context.policeTextSecondary;
+
+    Widget tile({required Widget child, required VoidCallback onTap}) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: child,
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: tile(
+              onTap: onNewCase,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      decoration: BoxDecoration(
+                        color: blueSoft,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: blue.withValues(alpha: dark ? 0.35 : 0.18)),
+                      ),
+                      child: Icon(Icons.add_rounded, color: blue, size: 30),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Add case',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: labelColor),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: tile(
+              onTap: onPickAll,
+              child: _FolderTileBody(
+                selected: scope == _FolderScope.all,
+                label: 'All cases',
+                subtitle: '$total files',
+                blue: blue,
+                dark: dark,
+                labelColor: labelColor,
+                subColor: subColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: tile(
+              onTap: onPickWeek,
+              child: _FolderTileBody(
+                selected: scope == _FolderScope.thisWeek,
+                label: 'This week',
+                subtitle: '$weekCount files',
+                blue: blue,
+                dark: dark,
+                labelColor: labelColor,
+                subColor: subColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FolderTileBody extends StatelessWidget {
+  final bool selected;
+  final String label;
+  final String subtitle;
+  final Color blue;
+  final bool dark;
+  final Color labelColor;
+  final Color subColor;
+
+  const _FolderTileBody({
+    required this.selected,
+    required this.label,
+    required this.subtitle,
+    required this.blue,
+    required this.dark,
+    required this.labelColor,
+    required this.subColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        children: [
+          _GlassFolderThumbnail(
+            blue: blue,
+            dark: dark,
+            emphasized: selected,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: labelColor),
+          ),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: subColor),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GlassFolderThumbnail extends StatelessWidget {
+  final Color blue;
+  final bool dark;
+  final bool emphasized;
+
+  const _GlassFolderThumbnail({
+    required this.blue,
+    required this.dark,
+    required this.emphasized,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ring = emphasized ? blue.withValues(alpha: 0.85) : Colors.transparent;
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: ring, width: emphasized ? 2 : 0),
+          boxShadow: [
+            BoxShadow(
+              color: blue.withValues(alpha: dark ? 0.35 : 0.22),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color.lerp(blue, Colors.white, dark ? 0.08 : 0.15)!,
+                    blue,
+                  ],
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.white.withValues(alpha: dark ? 0.06 : 0.14),
+                          Colors.white.withValues(alpha: dark ? 0.02 : 0.06),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Center(
+              child: Icon(
+                Icons.folder_rounded,
+                size: 34,
+                color: Colors.white.withValues(alpha: 0.95),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SecondaryActionsRow extends StatelessWidget {
+  final Color blue;
+  final Color blueSoft;
+  final VoidCallback onNew;
+  final VoidCallback onSearchTap;
+
+  const _SecondaryActionsRow({
+    required this.blue,
+    required this.blueSoft,
+    required this.onNew,
+    required this.onSearchTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Material(
+          color: blueSoft,
+          borderRadius: BorderRadius.circular(999),
+          child: InkWell(
+            onTap: onNew,
+            borderRadius: BorderRadius.circular(999),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Text(
+                'New +',
+                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: blue),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Material(
+            color: blueSoft,
+            borderRadius: BorderRadius.circular(999),
+            child: InkWell(
+              onTap: onSearchTap,
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.search_rounded, color: blue.withValues(alpha: 0.85), size: 22),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Search',
+                      style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: blue.withValues(alpha: 0.9)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _EmptyStateNoCases extends StatelessWidget {
   const _EmptyStateNoCases();
+
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -206,7 +674,7 @@ class _EmptyStateNoCases extends StatelessWidget {
               color: AppColors.accent.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(24),
             ),
-            child: const Icon(Icons.description_outlined, size: 36, color: AppColors.accent),
+            child: const Icon(Icons.folder_open_rounded, size: 36, color: AppColors.accent),
           ),
           const SizedBox(height: 24),
           Text(
@@ -226,6 +694,7 @@ class _EmptyStateNoCases extends StatelessWidget {
 
 class _EmptyStateNoSearchResults extends StatelessWidget {
   const _EmptyStateNoSearchResults();
+
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -250,101 +719,124 @@ class _EmptyStateNoSearchResults extends StatelessWidget {
   }
 }
 
-class _CaseCard extends StatelessWidget {
+class _EmptyStateScopeEmpty extends StatelessWidget {
+  final Color blue;
+
+  const _EmptyStateScopeEmpty({required this.blue});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 60),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.date_range_rounded, size: 48, color: blue.withValues(alpha: 0.55)),
+          const SizedBox(height: 20),
+          Text(
+            'Nothing this week',
+            style: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w600, color: context.policeTextPrimary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Try “All cases” or clear filters from the menu.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(fontSize: 14, color: context.policeTextHint),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _CaseRowCard extends StatelessWidget {
   final CaseRecord record;
   final int caseNumber;
   final Box<CaseRecord> box;
-  const _CaseCard({required this.record, required this.caseNumber, required this.box});
+  final Color accent;
+
+  const _CaseRowCard({
+    required this.record,
+    required this.caseNumber,
+    required this.box,
+    required this.accent,
+  });
 
   TextDirection get _dir => record.isUrdu ? TextDirection.rtl : TextDirection.ltr;
 
   @override
   Widget build(BuildContext context) {
     final refText = CaseReference.resolve(record, box);
+    final title = record.heading.isNotEmpty ? record.heading : 'Untitled Case';
+    final meta = '${refText.isNotEmpty ? '$refText · ' : ''}${_formatShortDate(record.savedAt)}';
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: GestureDetector(
         onTap: () => _openDetail(context),
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(22, 20, 16, 18),
+          padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
           decoration: BoxDecoration(
             color: context.policeCard,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(color: context.policeBorder, width: 1),
             boxShadow: [
               BoxShadow(
-                color: context.isPoliceDark ? Colors.black.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.04),
-                blurRadius: 12,
-                offset: const Offset(0, 2),
+                color: context.isPoliceDark ? Colors.black.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.05),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(
-              children: [
-                Text(
-                  'Case $caseNumber',
-                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: context.policeTextHint, letterSpacing: 0.3),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    refText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.right,
-                    style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: context.policeTextSecondary),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      accent,
+                      Color.lerp(accent, Colors.black, 0.18)!,
+                    ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              record.heading.isNotEmpty ? record.heading : 'Untitled Case',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textDirection: _dir,
-              style: record.isUrdu
-                  ? GoogleFonts.notoNastaliqUrdu(fontSize: 18, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
-                  : GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: context.policeTextPrimary, height: 1.3),
-            ),
-            if (record.details.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                record.preview,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textDirection: _dir,
-                style: record.isUrdu
-                    ? GoogleFonts.notoNastaliqUrdu(fontSize: 14, fontWeight: FontWeight.w400, color: context.policeTextSecondary)
-                    : GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: context.policeTextSecondary, height: 1.5),
+                child: Icon(Icons.description_rounded, color: Colors.white.withValues(alpha: 0.95), size: 26),
               ),
-            ],
-            const SizedBox(height: 14),
-            Row(children: [
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      _formatDate(record.savedAt),
-                      style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w400, color: context.policeTextHint),
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: _dir,
+                      style: record.isUrdu
+                          ? GoogleFonts.notoNastaliqUrdu(fontSize: 17, fontWeight: FontWeight.w700, color: context.policeTextPrimary)
+                          : GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: context.policeTextPrimary),
                     ),
-                    if (record.editCount > 0) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        'Edited ×${record.editCount}',
-                        style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w400, color: context.policeTextHint),
-                      ),
-                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      meta,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: context.policeTextSecondary),
+                    ),
                   ],
                 ),
               ),
-              _ActionDot(onExportPdf: () => _exportPdf(context), onPrint: () => _printCase(context)),
-            ]),
-          ]),
+              _CaseOverflowMenu(
+                onExportPdf: () => _exportPdf(context),
+                onPrint: () => _printCase(context),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -417,28 +909,29 @@ class _CaseCard extends StatelessWidget {
     }
   }
 
-  String _formatDate(DateTime dt) {
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  String _formatShortDate(DateTime dt) {
     final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     final min = dt.minute.toString().padLeft(2, '0');
-    return '${days[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}, ${dt.year} · $h:$min $ampm';
+    return '${months[dt.month - 1]} ${dt.day}, ${dt.year} · $h:$min $ampm';
   }
 }
 
-class _ActionDot extends StatelessWidget {
+class _CaseOverflowMenu extends StatelessWidget {
   final VoidCallback onExportPdf;
   final VoidCallback onPrint;
-  const _ActionDot({required this.onExportPdf, required this.onPrint});
+
+  const _CaseOverflowMenu({required this.onExportPdf, required this.onPrint});
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 32,
-      height: 32,
+      width: 36,
+      height: 36,
       child: PopupMenuButton<String>(
         padding: EdgeInsets.zero,
-        icon: Icon(Icons.more_horiz_rounded, size: 20, color: context.policeTextHint),
+        icon: Icon(Icons.more_vert_rounded, size: 22, color: context.policeTextHint),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         color: context.policeCard,
         elevation: 8,

@@ -27,8 +27,7 @@ const Color _kLabel = Color(0xFF6B7280);
 const Color _kFieldText = Color(0xFF1A1A2E);
 const Color _kLineIdle = Color(0xFFD1D5DB);
 const Color _kLineFocus = Color(0xFF3399FF);
-const int _kTableMinStartRows = 5;
-const int _kTableMaxRows = 20;
+/// Legacy row-based table; notebook UI uses [tableNarrativeKey] / [tableSerialKey] / [tableDatetimeKey].
 
 /// Premium built-in form: floating mic, spacious fields, dynamic investigation table.
 class BuiltinFormScreen extends StatefulWidget {
@@ -66,16 +65,8 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
 
   String? _focusedKey;
   bool _showEmptyHint = true;
-  int _tableVisibleRows = _kTableMinStartRows;
 
   late AnimationController _pulseController;
-
-  FormFieldDefinition? get _tableField {
-    for (final f in widget.format.builtinFormFields) {
-      if (f.type == FormFieldType.table) return f;
-    }
-    return null;
-  }
 
   @override
   void initState() {
@@ -86,7 +77,6 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
     );
     _lang.addListener(_onLang);
     _lang.init();
-    _recomputeTableFromInitial();
     _initFieldControllers();
     _attachFocusListeners();
     _initSpeech();
@@ -94,41 +84,19 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
 
   void _onLang() => setState(() {});
 
-  void _recomputeTableFromInitial() {
-    final table = _tableField;
-    if (table == null) return;
-    final init = widget.initialValues;
-    if (init == null || init.isEmpty) {
-      _tableVisibleRows = _kTableMinStartRows;
-      return;
-    }
-    var maxR = -1;
-    final prefix = '${table.id}_r';
-    for (final k in init.keys) {
-      if (!k.startsWith(prefix)) continue;
-      // halaat_table_r3_c0
-      final rest = k.substring(prefix.length);
-      final idx = rest.indexOf('_c');
-      if (idx <= 0) continue;
-      final r = int.tryParse(rest.substring(0, idx)) ?? -1;
-      if (r > maxR) maxR = r;
-    }
-    final need = (maxR < 0) ? _kTableMinStartRows : (maxR + 1);
-    _tableVisibleRows = need.clamp(_kTableMinStartRows, _kTableMaxRows);
-  }
-
   void _initFieldControllers() {
     final init = widget.initialValues ?? const <String, String>{};
     for (final f in widget.format.builtinFormFields) {
       if (f.type == FormFieldType.table) {
-        final cols = f.tableColumns?.length ?? 0;
-        for (var r = 0; r < _tableVisibleRows; r++) {
-          for (var c = 0; c < cols; c++) {
-            final k = formCellKey(f.id, r, c);
-            _controllers[k] = TextEditingController(text: init[k] ?? '');
-            _focusNodes[k] = FocusNode();
-          }
-        }
+        final nKey = tableNarrativeKey(f.id);
+        final sKey = tableSerialKey(f.id);
+        final dKey = tableDatetimeKey(f.id);
+        _controllers[nKey] = TextEditingController(text: resolveTableNarrative(f.id, init));
+        _controllers[sKey] = TextEditingController(text: resolveTableSerial(f.id, init));
+        _controllers[dKey] = TextEditingController(text: resolveTableDatetime(f.id, init));
+        _focusNodes[nKey] = FocusNode();
+        _focusNodes[sKey] = FocusNode();
+        _focusNodes[dKey] = FocusNode();
       } else {
         _controllers[f.id] = TextEditingController(text: init[f.id] ?? '');
         _focusNodes[f.id] = FocusNode();
@@ -229,7 +197,8 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
     if (text.isEmpty) return;
     final controller = _controllers[key];
     if (controller == null) return;
-    final cleaned = key.contains('_r') && key.endsWith('_c0') ? text.trim() : text.replaceAll('\n', ' ').trim();
+    final allowMultiline = key.endsWith('_narrative') || key.endsWith('_serial') || key.endsWith('_datetime');
+    final cleaned = allowMultiline ? text : text.replaceAll('\n', ' ').trim();
     final sep = _textBeforeListen.isEmpty ? '' : ' ';
     controller.value = TextEditingValue(
       text: _textBeforeListen + sep + cleaned,
@@ -299,16 +268,21 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
     final lines = <String>[];
     for (final f in widget.format.builtinFormFields) {
       if (f.type == FormFieldType.table) {
-        final tc = f.tableColumns?.length ?? 0;
-        for (var r = 0; r < _tableVisibleRows; r++) {
-          for (var c = 0; c < tc; c++) {
-            final k = formCellKey(f.id, r, c);
-            final v = values[k];
-            if (v != null && v.isNotEmpty) {
-              final colLabel = c < tc ? (ur ? f.tableColumns![c].labelUrdu : f.tableColumns![c].labelEnglish) : '$c';
-              lines.add('${ur ? f.labelUrdu : f.labelEnglish} R${r + 1} $colLabel: $v');
-            }
-          }
+        final tc = f.tableColumns ?? const <FormTableColumnDef>[];
+        final n = values[tableNarrativeKey(f.id)];
+        final s = values[tableSerialKey(f.id)];
+        final d = values[tableDatetimeKey(f.id)];
+        if (n != null && n.isNotEmpty) {
+          final lab = tc.isNotEmpty ? (ur ? tc[0].labelUrdu : tc[0].labelEnglish) : (ur ? f.labelUrdu : f.labelEnglish);
+          lines.add('$lab: $n');
+        }
+        if (s != null && s.isNotEmpty) {
+          final lab = tc.length > 1 ? (ur ? tc[1].labelUrdu : tc[1].labelEnglish) : '';
+          lines.add('${ur ? f.labelUrdu : f.labelEnglish} $lab: $s');
+        }
+        if (d != null && d.isNotEmpty) {
+          final lab = tc.length > 2 ? (ur ? tc[2].labelUrdu : tc[2].labelEnglish) : '';
+          lines.add('${ur ? f.labelUrdu : f.labelEnglish} $lab: $d');
         }
       } else {
         final v = values[f.id];
@@ -333,21 +307,20 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
     final ur = _ur;
     for (final f in widget.format.builtinFormFields) {
       if (f.type == FormFieldType.table) {
-        final p = '${f.id}_r';
-        if (key.startsWith(p)) {
-          final rest = key.substring(p.length);
-          final ci = rest.indexOf('_c');
-          if (ci > 0) {
-            final r = int.tryParse(rest.substring(0, ci)) ?? 0;
-            final c = int.tryParse(key.split('_c').last) ?? 0;
-            if (c < (f.tableColumns?.length ?? 0)) {
-              final col = f.tableColumns![c];
-              final colName = ur ? col.labelUrdu : col.labelEnglish;
-              return _ur
-                  ? 'بولیں: $colName — قطار ${r + 1}'
-                  : 'Speaking into: $colName (row ${r + 1})';
-            }
-          }
+        if (key == tableNarrativeKey(f.id)) {
+          final col = f.tableColumns != null && f.tableColumns!.isNotEmpty ? f.tableColumns![0] : null;
+          final name = col != null ? (ur ? col.labelUrdu : col.labelEnglish) : f.labelEnglish;
+          return _ur ? 'بولیں: $name' : 'Speaking into: $name';
+        }
+        if (key == tableSerialKey(f.id)) {
+          final col = f.tableColumns != null && f.tableColumns!.length > 1 ? f.tableColumns![1] : null;
+          final name = col != null ? (ur ? col.labelUrdu : col.labelEnglish) : 'Serial';
+          return _ur ? 'بولیں: $name' : 'Speaking into: $name';
+        }
+        if (key == tableDatetimeKey(f.id)) {
+          final col = f.tableColumns != null && f.tableColumns!.length > 2 ? f.tableColumns![2] : null;
+          final name = col != null ? (ur ? col.labelUrdu : col.labelEnglish) : 'Date & time';
+          return _ur ? 'بولیں: $name' : 'Speaking into: $name';
         }
       } else if (f.id == key) {
         return _ur ? 'بولیں: ${f.labelUrdu}' : 'Speaking into: ${f.labelEnglish}';
@@ -485,22 +458,6 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
         );
       }
     }
-  }
-
-  void _addTableRow() {
-    final f = _tableField;
-    if (f == null || _tableVisibleRows >= _kTableMaxRows) return;
-    setState(() {
-      _tableVisibleRows++;
-      final cols = f.tableColumns?.length ?? 0;
-      final r = _tableVisibleRows - 1;
-      for (var c = 0; c < cols; c++) {
-        final k = formCellKey(f.id, r, c);
-        _controllers[k] = TextEditingController();
-        _focusNodes[k] = FocusNode();
-        _focusNodes[k]!.addListener(_makeFocusListener(k));
-      }
-    });
   }
 
   void Function() _makeFocusListener(String k) {
@@ -757,16 +714,14 @@ class _BuiltinFormScreenState extends State<BuiltinFormScreen> with TickerProvid
   Widget _buildRow(int rowIndex, List<FormFieldDefinition> rowFields, bool isDark, bool ur) {
     if (rowFields.isEmpty) return const SizedBox.shrink();
     if (rowFields.length == 1 && rowFields.first.type == FormFieldType.table) {
-      return _InvestigationTable(
+      return _InvestigationNotebookTable(
         key: const ValueKey('builtin_investigation_table'),
         field: rowFields.first,
         isUrdu: ur,
         isDark: isDark,
         lang: _lang,
-        visibleRows: _tableVisibleRows,
         controllers: _controllers,
         focusNodes: _focusNodes,
-        onAddRow: _tableVisibleRows < _kTableMaxRows ? _addTableRow : null,
         onFirstInteraction: () {
           if (_showEmptyHint) setState(() => _showEmptyHint = false);
         },
@@ -956,27 +911,28 @@ class _PremiumField extends StatelessWidget {
   }
 }
 
-class _InvestigationTable extends StatelessWidget {
+/// One ruled “notebook” for circumstances + two tall side columns; no per-row numbers.
+class _InvestigationNotebookTable extends StatelessWidget {
+  static const double _rowMinHeight = 360;
+  static const double _lineHeight = 25;
+  static const double _bodyFont = 15;
+
   final FormFieldDefinition field;
   final bool isUrdu;
   final bool isDark;
   final LanguageService lang;
-  final int visibleRows;
   final Map<String, TextEditingController> controllers;
   final Map<String, FocusNode> focusNodes;
-  final VoidCallback? onAddRow;
   final VoidCallback onFirstInteraction;
 
-  const _InvestigationTable({
+  const _InvestigationNotebookTable({
     super.key,
     required this.field,
     required this.isUrdu,
     required this.isDark,
     required this.lang,
-    required this.visibleRows,
     required this.controllers,
     required this.focusNodes,
-    this.onAddRow,
     required this.onFirstInteraction,
   });
 
@@ -984,6 +940,10 @@ class _InvestigationTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final cols = field.tableColumns ?? [];
     if (cols.isEmpty) return const SizedBox.shrink();
+    final lineColor = isDark ? context.policeBorder : const Color(0xFFE5E7EB);
+    final nKey = tableNarrativeKey(field.id);
+    final sKey = tableSerialKey(field.id);
+    final dKey = tableDatetimeKey(field.id);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1004,166 +964,224 @@ class _InvestigationTable extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final w = constraints.maxWidth;
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Table(
-                border: TableBorder.all(color: isDark ? context.policeBorder : const Color(0xFFE5E7EB)),
-                columnWidths: {
-                  0: FixedColumnWidth(w * 0.6),
-                  1: FixedColumnWidth(w * 0.2),
-                  2: FixedColumnWidth(w * 0.2),
-                },
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Table(
+            border: TableBorder.all(color: lineColor),
+            columnWidths: const {
+              0: FlexColumnWidth(2.0),
+              1: FlexColumnWidth(1.2),
+              2: FlexColumnWidth(1.2),
+            },
+            defaultVerticalAlignment: TableCellVerticalAlignment.top,
+            children: [
+              TableRow(
+                decoration: BoxDecoration(
+                  color: isDark ? context.policeIconButtonBg : const Color(0xFFF8F9FA),
+                ),
                 children: [
-                  TableRow(
-                    decoration: const BoxDecoration(color: Color(0xFFF8F9FA)),
-                    children: [
-                      _thCell(cols[0], isUrdu, lang),
-                      _thCell(cols[1], isUrdu, lang, center: true),
-                      _thCell(cols[2], isUrdu, lang, center: true),
-                    ],
-                  ),
-                  for (var r = 0; r < visibleRows; r++)
-                    TableRow(
-                      decoration: BoxDecoration(
-                        color: (r % 2 == 0) ? Colors.white : const Color(0xFFFAFAFA),
-                      ),
-                      children: [
-                        _dataWideCell(context, r, 0, field, isUrdu, isDark, lang, onFirstInteraction),
-                        _dataNarrowCell(context, r, 1, field, isUrdu, isDark, onFirstInteraction, center: true),
-                        _dataNarrowCell(context, r, 2, field, isUrdu, isDark, onFirstInteraction, center: true),
-                      ],
-                    ),
+                  _thCell(context, cols[0], isUrdu, lang, leftAlign: !isUrdu),
+                  _thCell(context, cols[1], isUrdu, lang, center: true),
+                  _thCell(context, cols[2], isUrdu, lang, center: true),
                 ],
               ),
-            );
-          },
-        ),
-        if (onAddRow != null) ...[
-          const SizedBox(height: 12),
-          TextButton(
-            onPressed: onAddRow,
-            child: Text(
-              isUrdu ? '+ قطار' : '+ Add Row',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.accent,
+              TableRow(
+                children: [
+                  _ruledNarrativeCell(
+                    context: context,
+                    keyName: nKey,
+                    isUrdu: isUrdu,
+                    isDark: isDark,
+                    lang: lang,
+                    lineColor: lineColor,
+                    onFirst: onFirstInteraction,
+                  ),
+                  _sideTallCell(
+                    context: context,
+                    keyName: sKey,
+                    isUrdu: isUrdu,
+                    isDark: isDark,
+                    lang: lang,
+                    center: true,
+                    onFirst: onFirstInteraction,
+                  ),
+                  _sideTallCell(
+                    context: context,
+                    keyName: dKey,
+                    isUrdu: isUrdu,
+                    isDark: isDark,
+                    lang: lang,
+                    center: true,
+                    onFirst: onFirstInteraction,
+                  ),
+                ],
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ],
     );
   }
 
   static Widget _thCell(
+    BuildContext context,
     FormTableColumnDef c,
     bool isUrdu,
     LanguageService lang, {
     bool center = false,
+    bool leftAlign = false,
   }) {
     final t = isUrdu ? c.labelUrdu : c.labelEnglish;
+    final align = center
+        ? TextAlign.center
+        : (isUrdu
+            ? TextAlign.right
+            : (leftAlign ? TextAlign.left : TextAlign.left));
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
       child: Text(
         t,
-        textAlign: center ? TextAlign.center : (isUrdu ? TextAlign.right : TextAlign.left),
+        textAlign: align,
+        maxLines: 4,
+        softWrap: true,
         style: isUrdu
-            ? lang.urduStyle(fontSize: 12, fontWeight: FontWeight.w700, color: const Color(0xFF374151))
-            : GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: const Color(0xFF374151), height: 1.2),
+            ? lang
+                .urduStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: context.isPoliceDark ? context.policeTextPrimary : const Color(0xFF374151),
+                )
+                .copyWith(height: 1.25)
+            : GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: context.isPoliceDark ? context.policeTextPrimary : const Color(0xFF374151),
+                height: 1.2,
+              ),
       ),
     );
   }
 
-  Widget _dataWideCell(
-    BuildContext context,
-    int r,
-    int c,
-    FormFieldDefinition field,
-    bool isUrdu,
-    bool isDark,
-    LanguageService lang,
-    VoidCallback onFirst,
-  ) {
-    final k = formCellKey(field.id, r, c);
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 56),
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              (r + 1).toString().padLeft(2, '0'),
-              style: GoogleFonts.inter(
-                fontSize: 10,
-                color: isDark ? context.policeTextHint : const Color(0xFF9CA3AF),
-              ),
+  Widget _ruledNarrativeCell({
+    required BuildContext context,
+    required String keyName,
+    required bool isUrdu,
+    required bool isDark,
+    required LanguageService lang,
+    required Color lineColor,
+    required VoidCallback onFirst,
+  }) {
+    return SizedBox(
+      height: _rowMinHeight,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CustomPaint(
+            painter: _RuledPaperPainter(
+              lineColor: lineColor,
+              lineHeight: _lineHeight,
             ),
-            TextField(
-              controller: controllers[k],
-              focusNode: focusNodes[k],
-              onTap: onFirst,
-              maxLines: null,
-              minLines: 1,
-              textAlign: isUrdu ? TextAlign.right : TextAlign.left,
-              textDirection: isUrdu ? TextDirection.rtl : TextDirection.ltr,
-              style: isUrdu
-                  ? lang.urduStyle(
-                      fontSize: 15,
+          ),
+          TextField(
+            controller: controllers[keyName],
+            focusNode: focusNodes[keyName],
+            onTap: onFirst,
+            maxLines: null,
+            expands: true,
+            textAlign: isUrdu ? TextAlign.right : TextAlign.left,
+            textDirection: isUrdu ? TextDirection.rtl : TextDirection.ltr,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            style: isUrdu
+                ? lang
+                    .urduStyle(
+                      fontSize: _bodyFont,
                       color: isDark ? context.policeTextPrimary : _kFieldText,
                     )
-                  : GoogleFonts.inter(
-                      fontSize: 15,
-                      color: isDark ? context.policeTextPrimary : _kFieldText,
-                    ),
-              decoration: const InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-              ),
+                    .copyWith(height: _lineHeight / _bodyFont)
+                : GoogleFonts.inter(
+                    fontSize: _bodyFont,
+                    height: _lineHeight / _bodyFont,
+                    color: isDark ? context.policeTextPrimary : _kFieldText,
+                  ),
+            cursorColor: _kLineFocus,
+            decoration: InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              filled: true,
+              fillColor: isDark ? Colors.transparent : Colors.transparent,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _dataNarrowCell(
-    BuildContext context,
-    int r,
-    int c,
-    FormFieldDefinition field,
-    bool isUrdu,
-    bool isDark,
-    VoidCallback onFirst, {
-    bool center = false,
+  Widget _sideTallCell({
+    required BuildContext context,
+    required String keyName,
+    required bool isUrdu,
+    required bool isDark,
+    required LanguageService lang,
+    required bool center,
+    required VoidCallback onFirst,
   }) {
-    final k = formCellKey(field.id, r, c);
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 56),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: TextField(
-          controller: controllers[k],
-          focusNode: focusNodes[k],
-          onTap: onFirst,
-          maxLines: 1,
-          textAlign: center ? TextAlign.center : (isUrdu ? TextAlign.right : TextAlign.left),
-          textDirection: isUrdu ? TextDirection.rtl : TextDirection.ltr,
-          style: isUrdu
-              ? lang.urduStyle(fontSize: 14, color: isDark ? context.policeTextPrimary : _kFieldText)
-              : GoogleFonts.inter(fontSize: 14, color: isDark ? context.policeTextPrimary : _kFieldText),
-          decoration: const InputDecoration(
-            isDense: true,
-            border: InputBorder.none,
-            isCollapsed: true,
-          ),
+    return SizedBox(
+      height: _rowMinHeight,
+      child: TextField(
+        controller: controllers[keyName],
+        focusNode: focusNodes[keyName],
+        onTap: onFirst,
+        maxLines: null,
+        expands: true,
+        textAlign: center ? TextAlign.center : (isUrdu ? TextAlign.right : TextAlign.left),
+        textDirection: isUrdu ? TextDirection.rtl : TextDirection.ltr,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        style: isUrdu
+            ? lang
+                .urduStyle(
+                  fontSize: 14,
+                  color: isDark ? context.policeTextPrimary : _kFieldText,
+                )
+                .copyWith(height: 1.45)
+            : GoogleFonts.inter(
+                fontSize: 14,
+                height: 1.45,
+                color: isDark ? context.policeTextPrimary : _kFieldText,
+              ),
+        cursorColor: _kLineFocus,
+        decoration: const InputDecoration(
+          border: InputBorder.none,
+          filled: true,
+          fillColor: Colors.transparent,
+          contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         ),
       ),
     );
+  }
+}
+
+class _RuledPaperPainter extends CustomPainter {
+  final Color lineColor;
+  final double lineHeight;
+
+  _RuledPaperPainter({required this.lineColor, required this.lineHeight});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = lineColor
+      ..strokeWidth = 1
+      ..isAntiAlias = true;
+    for (var y = lineHeight; y < size.height; y += lineHeight) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RuledPaperPainter oldDelegate) {
+    return oldDelegate.lineColor != lineColor || oldDelegate.lineHeight != lineHeight;
   }
 }

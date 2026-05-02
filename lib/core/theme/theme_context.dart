@@ -8,6 +8,9 @@ extension PoliceThemeColors on BuildContext {
   Color get policeScaffold =>
       isPoliceDark ? AppColors.darkBackground : AppColors.surface;
 
+  Color get policeSearchFill =>
+      isPoliceDark ? AppColors.darkCard : AppColors.surfaceMuted;
+
   Color get policeCard =>
       isPoliceDark ? AppColors.darkCard : AppColors.surfaceCard;
 

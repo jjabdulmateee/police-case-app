@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -778,25 +777,7 @@ class PdfService {
     );
   }
 
-  /// At least 15 data rows, up to 20, includes rows implied by [values] and [field.tableRowCount].
-  static int _builtinTablePdfDataRowCount(FormFieldDefinition field, Map<String, String> values) {
-    const minRows = 15;
-    const maxRows = 20;
-    var maxR = -1;
-    final prefix = '${field.id}_r';
-    for (final k in values.keys) {
-      if (!k.startsWith(prefix)) continue;
-      final rest = k.substring(prefix.length);
-      final idx = rest.indexOf('_c');
-      if (idx <= 0) continue;
-      final r = int.tryParse(rest.substring(0, idx)) ?? -1;
-      if (r > maxR) maxR = r;
-    }
-    final fromData = maxR < 0 ? 0 : maxR + 1;
-    var n = math.max(math.max(fromData, field.tableRowCount), minRows);
-    if (n > maxRows) n = maxRows;
-    return n;
-  }
+  static const int _kPdfInvestigationTableBodyRows = 15;
 
   static pw.Widget _builtinPdfTable({
     required FormFieldDefinition field,
@@ -814,7 +795,9 @@ class PdfService {
     const border = PdfColor.fromInt(0xFFE5E7EB);
     final headerFill = const PdfColor.fromInt(0xFFF8F9FA);
     final rowAlt = const PdfColor.fromInt(0xFFFAFAFA);
-    final dataRows = _builtinTablePdfDataRowCount(field, values);
+    final narrative = resolveTableNarrative(field.id, values);
+    final serial = resolveTableSerial(field.id, values);
+    final datetime = resolveTableDatetime(field.id, values);
 
     final tableRows = <pw.TableRow>[
       pw.TableRow(
@@ -844,11 +827,14 @@ class PdfService {
         ),
       ),
     ];
-    for (var r = 0; r < dataRows; r++) {
+    for (var r = 0; r < _kPdfInvestigationTableBodyRows; r++) {
       final bg = r % 2 == 0 ? null : rowAlt;
+      final t0 = r == 0 ? narrative : ' ';
+      final t1 = r == 0 ? serial : ' ';
+      final t2 = r == 0 ? datetime : ' ';
       final row = <pw.Widget>[];
       for (var c = 0; c < cols.length; c++) {
-        final v = values[formCellKey(field.id, r, c)] ?? '';
+        final v = c == 0 ? t0 : (c == 1 ? t1 : t2);
         final isWide = c == 0;
         final ta = c == 0
             ? (isUrdu ? pw.TextAlign.right : pw.TextAlign.left)
@@ -856,7 +842,7 @@ class PdfService {
         row.add(
           pw.Container(
             color: bg,
-            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: pw.EdgeInsets.symmetric(horizontal: 4, vertical: r == 0 && isWide ? 5 : 4),
             child: isWide
                 ? pw.Text(
                     v.isEmpty ? ' ' : v,
@@ -868,20 +854,20 @@ class PdfService {
                       color: bodyColor,
                       lineSpacing: 1.15,
                     ),
-                    maxLines: 12,
-                  )
+                    maxLines: r == 0 ? 30 : 1,
+                )
                 : pw.Text(
                     v.isEmpty ? ' ' : v,
                     textDirection: textDir,
                     textAlign: ta,
-                    maxLines: 2,
+                    maxLines: r == 0 ? 8 : 1,
                     style: pw.TextStyle(
                       fontSize: 7.5,
                       font: baseFont,
                       color: bodyColor,
                     ),
                   ),
-          ),
+        ),
         );
       }
       tableRows.add(pw.TableRow(children: row));
